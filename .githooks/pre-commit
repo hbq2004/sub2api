@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+repo=$(git rev-parse --show-toplevel)
+scanner=$(git config --local --get sub2api.gitleaksPath || true)
+if [ -z "$scanner" ]; then scanner=gitleaks; fi
+if command -v pwsh >/dev/null 2>&1; then
+  shell=pwsh
+elif command -v powershell.exe >/dev/null 2>&1; then
+  shell=powershell.exe
+else
+  echo 'Secret scan unavailable: PowerShell is missing.' >&2
+  exit 2
+fi
+exec "$shell" -NoProfile -NonInteractive -File "$repo/tools/Scan-Secrets.ps1" -Mode staged -Gitleaks "$scanner"
