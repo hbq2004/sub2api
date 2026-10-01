@@ -1,0 +1,12 @@
+title = "Sub2API secret gate"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "business-root-material"
+description = "Literal encryption, signing, or bootstrap material"
+regex = '''(?i)(?:app[._-]?secret[._-]?key|encryption[._-]?key|auth[._-]?secret|jwt[._-]?secret|api[._-]?secret|merchant[._-]?key|webhook[._-]?secret)\s*[=:]\s*["']?([a-z0-9+/=_-]{16,})'''
+secretGroup = 1
+entropy = 3
+keywords = ["secret", "encryption", "merchant"]
