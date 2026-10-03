@@ -1003,7 +1003,10 @@ func TestHTTPUpstreamDoPublicHostsOnlyRejectsPrivateDestinationBeforeConnecting(
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, int64(1), calls.Load(), "loopback stays reachable for requests without the marker")
 
-	guarded, err := http.NewRequestWithContext(service.WithHTTPUpstreamPublicHostsOnly(t.Context()), http.MethodGet, target.URL, nil)
+	// Use HTTPS so this assertion reaches the private-address check rather than
+	// the scheme check; the guarded request must never reach the HTTP fixture.
+	guardedURL := "https://" + target.Listener.Addr().String()
+	guarded, err := http.NewRequestWithContext(service.WithHTTPUpstreamPublicHostsOnly(t.Context()), http.MethodGet, guardedURL, nil)
 	require.NoError(t, err)
 	resp, err = upstream.Do(guarded, "", 1, 1)
 	require.Error(t, err)
@@ -1030,17 +1033,20 @@ func TestHTTPUpstreamPublicHostsOnlyValidatesEveryRedirectHop(t *testing.T) {
 
 	via := []*http.Request{guarded}
 	for _, hop := range []string{
-		"http://127.0.0.1:8080/a.png",
-		"http://[::1]:8080/a.png",
-		"http://10.0.0.8/a.png",
-		"http://169.254.169.254/latest/meta-data/",
-		"http://0.0.0.0/a.png",
+		"https://127.0.0.1:8080/a.png",
+		"https://[::1]:8080/a.png",
+		"https://10.0.0.8/a.png",
+		"https://169.254.169.254/latest/meta-data/",
+		"https://0.0.0.0/a.png",
 	} {
 		hopReq, err := http.NewRequestWithContext(guarded.Context(), http.MethodGet, hop, nil)
 		require.NoError(t, err)
 		require.Error(t, client.CheckRedirect(hopReq, via), "hop=%s", hop)
 	}
-	publicHop, err := http.NewRequestWithContext(guarded.Context(), http.MethodGet, "http://93.184.216.34/a.png", nil)
+	publicHTTPHop, err := http.NewRequestWithContext(guarded.Context(), http.MethodGet, "http://93.184.216.34/a.png", nil)
+	require.NoError(t, err)
+	require.Error(t, client.CheckRedirect(publicHTTPHop, via), "public destinations still require HTTPS")
+	publicHop, err := http.NewRequestWithContext(guarded.Context(), http.MethodGet, "https://93.184.216.34/a.png", nil)
 	require.NoError(t, err)
 	require.NoError(t, client.CheckRedirect(publicHop, via))
 	require.Error(t, client.CheckRedirect(publicHop, make([]*http.Request, 10)), "redirect chain stays capped")
