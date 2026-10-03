@@ -157,6 +157,22 @@ async function verifyPersonalAPI(origin) {
   assert.equal(response.status, 200, 'Local personal API key /v1/models check')
   record('Existing personal API key still serves the local /v1 endpoint')
 }
+function verifyDebugOwnership() {
+  const policy = JSON.parse(readFileSync(poolPolicyFile, 'utf8'))
+  if (policy.mode !== 'cloud-primary') return false
+  assert.equal(policy.local_runtime, 'debug-only', 'Cloud-primary local runtime must remain debug-only')
+  const ceiling = policy.local_production_account_id_ceiling
+  assert.ok(Number.isSafeInteger(ceiling) && ceiling > 0, 'Local production identity boundary is missing')
+  const counts = JSON.parse(sql('sub2api-postgres', `SELECT json_build_object(
+    'active',count(*) FILTER (WHERE status='active'),
+    'schedulable',count(*) FILTER (WHERE schedulable))
+    FROM accounts WHERE deleted_at IS NULL AND id <= ${ceiling}`))
+  assert.equal(counts.active, 0, 'Retained production accounts must stay disabled locally')
+  assert.equal(counts.schedulable, 0, 'Retained production accounts must stay unschedulable locally')
+  report.cloudPrimary = true
+  report.localProductionOwnership = counts
+  return true
+}
 async function verifyFixtureAPI(origin, environment) {
   const admin = JSON.parse(sql(fixturePG, "SELECT row_to_json(x) FROM (SELECT id,email,password_hash FROM users WHERE role='admin' AND deleted_at IS NULL LIMIT 1) x", 'postgres'))
   const fingerprint = createHash('sha256').update(admin.email.trim().toLowerCase() + '\n' + admin.password_hash).digest().readBigUInt64BE() & 0x7fffffffffffffffn
@@ -216,6 +232,7 @@ try {
   report.imageID = imageID
   report.sourceRevision = sourceRevision
   report.previousImageID = current.Image
+  const cloudPrimary = verifyDebugOwnership()
   const initial = integrity('sub2api-postgres')
   const baselineDirectory = backup('before-rehearsal')
   installKeys(imageID, currentEnvironment)
@@ -312,7 +329,12 @@ try {
     report.protection = protectedLive
     report.recordCounts = Object.fromEntries(Object.entries(finalIntegrity).filter(([key]) => !key.includes('_bindings') && !key.includes('_accounting')))
     record('Local :8080 runs the tested image with strict independent encryption and preserved personal data')
-    await verifyPersonalAPI('http://127.0.0.1:8080')
+    if (cloudPrimary) {
+      verifyDebugOwnership()
+      record('Cloud-primary local production identities remain disabled; authenticated API acceptance used the isolated fixture')
+    } else {
+      await verifyPersonalAPI('http://127.0.0.1:8080')
+    }
     const liveBrowser = JSON.parse(execute(process.execPath, [join(deploy, 'verify-local-release.mjs'),
       '--origin', 'http://127.0.0.1:8080', '--version', expectedVersion,
       '--output', join(reportDirectory, 'live')], { encoding: 'utf8' }))
