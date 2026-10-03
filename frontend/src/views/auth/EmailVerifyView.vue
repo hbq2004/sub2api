@@ -30,6 +30,9 @@
 
       <!-- Verification Form -->
       <form v-else @submit.prevent="handleVerify" class="space-y-5">
+        <p v-if="errorMessage" role="alert" class="break-words text-sm text-red-600 dark:text-red-400">
+          {{ errorMessage }}
+        </p>
         <!-- Verification Code Input -->
         <div>
           <label for="code" class="input-label text-center">
@@ -67,7 +70,7 @@
         </div>
 
         <!-- Turnstile Widget for Resend -->
-        <div v-if="actionCaptchaEnabled || (turnstileEnabled && showResendTurnstile)">
+        <div v-if="actionCaptchaEnabled || (turnstileActive && showResendTurnstile)">
           <TurnstileWidget
             ref="turnstileRef"
             :site-key="turnstileSiteKey"
@@ -150,7 +153,7 @@
             type="button"
             @click="handleResendCode"
             :disabled="
-              isSendingCode || (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)
+              isSendingCode || (turnstileActive && showResendTurnstile && !resendTurnstileToken)
             "
             class="text-sm text-primary-600 transition-colors hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:text-primary-300"
           >
@@ -270,7 +273,7 @@ const aliyunCaptchaEnabled = ref<boolean>(false)
 const aliyunCaptchaSceneId = ref<string>('')
 const aliyunCaptchaPrefix = ref<string>('')
 const aliyunCaptchaRegion = ref<string>('cn')
-const siteName = ref<string>('Sub2API')
+const siteName = ref<string>('智驿 AI')
 const registrationEmailSuffixWhitelist = ref<string[]>([])
 // 域名限量注册开关：开启时非白名单域名可注册 1 个账户（由后端判定），前端不做白名单预检。
 const emailDomainQuotaEnabled = ref<boolean>(false)
@@ -283,6 +286,7 @@ const resendTencentCaptchaRandstr = ref<string>('')
 const createAccountTurnstileToken = ref<string>('')
 const createAccountTencentCaptchaRandstr = ref<string>('')
 const showResendTurnstile = ref<boolean>(false)
+const turnstileActive = computed(() => turnstileEnabled.value && Boolean(turnstileSiteKey.value))
 const aliyunCaptchaReady = computed(
   () =>
     aliyunCaptchaEnabled.value &&
@@ -297,7 +301,7 @@ const actionCaptchaEnabled = computed(
 )
 const captchaEnabled = computed(
   () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
+    turnstileActive.value || actionCaptchaEnabled.value
 )
 
 const errors = ref({
@@ -309,7 +313,7 @@ const validationToastMessage = computed(
   () => errors.value.code || errors.value.turnstile || ''
 )
 const pendingOAuthCreateTurnstileRequired = computed(
-  () => isPendingOAuthFlow() && turnstileEnabled.value
+  () => isPendingOAuthFlow() && turnstileActive.value
 )
 const pendingOAuthCreateCaptchaEnabled = computed(
   () => isPendingOAuthFlow() && captchaEnabled.value
@@ -372,7 +376,7 @@ onMounted(async () => {
     aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
     aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
     aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-    siteName.value = settings.site_name || 'Sub2API'
+    siteName.value = settings.site_name || '智驿 AI'
     registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
       settings.registration_email_suffix_whitelist || []
     )
@@ -527,6 +531,8 @@ function persistPendingOAuthSession(provider: string, redirect?: string): void {
 // ==================== Send Code ====================
 
 async function sendCode(): Promise<void> {
+  if (isSendingCode.value || !hasRegisterData.value) return
+
   isSendingCode.value = true
   errorMessage.value = ''
   let requestSucceeded = false
@@ -593,7 +599,7 @@ async function sendCode(): Promise<void> {
       resendTurnstileToken.value = ''
       resendTencentCaptchaRandstr.value = ''
       turnstileRef.value?.reset()
-      if (!requestSucceeded && turnstileEnabled.value) {
+      if (!requestSucceeded && turnstileActive.value) {
         showResendTurnstile.value = true
       }
     }
@@ -619,13 +625,15 @@ function clearStoredCaptchaProof(): void {
 // ==================== Handlers ====================
 
 async function handleResendCode(): Promise<void> {
+  if (isSendingCode.value || isLoading.value || countdown.value > 0) return
+
   // Turnstile stays staged; Tencent is acquired from this action.
-  if (turnstileEnabled.value && !showResendTurnstile.value) {
+  if (turnstileActive.value && !showResendTurnstile.value) {
     showResendTurnstile.value = true
     return
   }
 
-  if (turnstileEnabled.value && !resendTurnstileToken.value) {
+  if (turnstileActive.value && !resendTurnstileToken.value) {
     errors.value.turnstile = t('auth.completeVerification')
     return
   }
@@ -654,6 +662,8 @@ function validateForm(): boolean {
 }
 
 async function handleVerify(): Promise<void> {
+  if (isLoading.value || !hasRegisterData.value) return
+
   errorMessage.value = ''
 
   if (!validateForm()) {

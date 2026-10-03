@@ -296,6 +296,7 @@ export default {
       generateCodesTitle: '生成兑换码',
       generatedSuccessfully: '生成成功',
       codesCreated: '已创建 {count} 个兑换码',
+      oneTimeCodeNotice: '原码仅在此窗口显示一次。关闭前请安全交付；列表与历史记录只显示掩码。',
       codeType: '类型',
       amount: '金额 ($)',
       value: '面值',

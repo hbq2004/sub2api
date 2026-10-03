@@ -21,17 +21,23 @@ type PasskeyHandler struct {
 	passkeys    *service.PasskeyService
 	authService *service.AuthService
 	settingSvc  *service.SettingService
+	totpService *service.TotpService
+	userService *service.UserService
 }
 
 func NewPasskeyHandler(
 	passkeys *service.PasskeyService,
 	authService *service.AuthService,
 	settingService *service.SettingService,
+	totpService *service.TotpService,
+	userService *service.UserService,
 ) *PasskeyHandler {
 	return &PasskeyHandler{
 		passkeys:    passkeys,
 		authService: authService,
 		settingSvc:  settingService,
+		totpService: totpService,
+		userService: userService,
 	}
 }
 
@@ -128,6 +134,9 @@ func (h *PasskeyHandler) BeginRegistration(c *gin.Context) {
 	if !h.requirePasskeysEnabled(c) {
 		return
 	}
+	if !h.requireAdminPasskeyStepUp(c) {
+		return
+	}
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -143,6 +152,9 @@ func (h *PasskeyHandler) BeginRegistration(c *gin.Context) {
 
 func (h *PasskeyHandler) FinishRegistration(c *gin.Context) {
 	if !h.requirePasskeysEnabled(c) {
+		return
+	}
+	if !h.requireAdminPasskeyStepUp(c) {
 		return
 	}
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
@@ -201,6 +213,9 @@ func (h *PasskeyHandler) Rename(c *gin.Context) {
 }
 
 func (h *PasskeyHandler) Delete(c *gin.Context) {
+	if !h.requireAdminPasskeyStepUp(c) {
+		return
+	}
 	subject, credentialID, ok := passkeyMutationTarget(c)
 	if !ok {
 		return
@@ -210,6 +225,22 @@ func (h *PasskeyHandler) Delete(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+func (h *PasskeyHandler) requireAdminPasskeyStepUp(c *gin.Context) bool {
+	role, ok := middleware2.GetUserRoleFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User role is unavailable")
+		return false
+	}
+	if role != service.RoleAdmin {
+		return true
+	}
+	if h.totpService == nil || h.userService == nil {
+		middleware2.AbortWithError(c, http.StatusServiceUnavailable, "STEP_UP_UNAVAILABLE", "Administrator TOTP verification is unavailable")
+		return false
+	}
+	return middleware2.EnforceStepUpAlways(c, h.totpService, h.userService)
 }
 
 func (h *PasskeyHandler) requirePasskeysEnabled(c *gin.Context) bool {

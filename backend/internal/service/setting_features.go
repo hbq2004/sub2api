@@ -252,11 +252,32 @@ func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
 // 开启时账号/代理导出、备份创建/下载、S3 配置修改、提升管理员等操作
 // 要求当前会话在有效期内完成过 TOTP step-up 验证。
 func (s *SettingService) IsStepUpEnabled(ctx context.Context) bool {
+	enabled, err := s.IsStepUpEnabledStrict(ctx)
+	return err == nil && enabled
+}
+
+// IsStepUpEnabledStrict reads the step-up switch without converting a storage
+// failure into an explicit "disabled" value. Sensitive-operation middleware
+// uses this method so a missing, malformed, or unavailable setting fails
+// closed instead of silently disabling the gate.
+func (s *SettingService) IsStepUpEnabledStrict(ctx context.Context) (bool, error) {
+	if s == nil || s.settingRepo == nil {
+		return false, errors.New("step-up setting repository is unavailable")
+	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStepUpEnabled)
 	if err != nil {
-		return false // 默认关闭
+		slog.Warn("step_up_setting_read_failed")
+		return false, fmt.Errorf("read step-up setting: %w", err)
 	}
-	return value == "true"
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		slog.Warn("step_up_setting_invalid")
+		return false, fmt.Errorf("invalid step-up setting value")
+	}
 }
 
 // defaultAuditLogRetentionDays 审计日志默认保留天数。
@@ -287,13 +308,21 @@ func parseAuditLogRetentionDays(value string) int {
 	return n
 }
 
+func normalizeSiteName(value string) string {
+	name := strings.TrimSpace(value)
+	if name == "" || strings.EqualFold(name, "Sub2API") {
+		return defaultSiteName
+	}
+	return name
+}
+
 // GetSiteName 获取网站名称
 func (s *SettingService) GetSiteName(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
-	if err != nil || value == "" {
-		return "Sub2API"
+	if err != nil {
+		return defaultSiteName
 	}
-	return value
+	return normalizeSiteName(value)
 }
 
 // GetDefaultConcurrency 获取默认并发量

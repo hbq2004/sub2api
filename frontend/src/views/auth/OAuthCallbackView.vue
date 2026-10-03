@@ -1,13 +1,13 @@
 <template>
   <div class="min-h-screen bg-gray-50 px-4 py-10 dark:bg-dark-900">
     <div class="mx-auto max-w-2xl">
-      <div v-if="isProcessing" class="card p-6 text-center">
+      <div v-if="isProcessing || show2FAModal" class="card p-6 text-center">
         <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
         <h1 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
-          {{ t('auth.oauth.callbackTitle') }}
+          {{ isEmailOAuthCallback ? t('auth.oidc.callbackTitle', { providerName }) : t('auth.oauth.callbackTitle') }}
         </h1>
         <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-          {{ t('auth.oauth.callbackHint') }}
+          {{ isEmailOAuthCallback ? t('auth.oidc.callbackProcessing') : t('auth.oauth.callbackHint') }}
         </p>
       </div>
 
@@ -81,10 +81,10 @@
 
       <div v-else-if="invalidCallback" class="card p-6 text-center">
         <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
-          {{ t('auth.oauth.invalidCallbackTitle') }}
+          {{ callbackError ? t('auth.emailOAuth.callbackFailed') : t('auth.oauth.invalidCallbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-          {{ t('auth.oauth.invalidCallbackHint') }}
+        <p :role="callbackError ? 'alert' : undefined" class="mt-2 break-words text-sm text-gray-600 dark:text-gray-400">
+          {{ callbackError || t('auth.oauth.invalidCallbackHint') }}
         </p>
         <button class="btn btn-primary mt-6" type="button" @click="router.replace('/login')">
           {{ t('auth.backToLogin') }}
@@ -142,6 +142,14 @@
         </div>
       </div>
     </div>
+    <TotpLoginModal
+      v-if="show2FAModal"
+      ref="totpModalRef"
+      :temp-token="totpTempToken"
+      :user-email-masked="totpUserEmailMasked"
+      @verify="handle2FAVerify"
+      @cancel="handle2FACancel"
+    />
   </div>
 </template>
 
@@ -151,6 +159,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore, useAuthStore } from '@/stores'
+import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
 import { apiClient } from '@/api/client'
 import { buildApiUrl } from '@/api/url'
 import {
@@ -170,7 +179,8 @@ const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const authStore = useAuthStore()
-const isProcessing = ref(false)
+const isEmailOAuthCallback = computed(() => route.path === '/auth/oauth/callback')
+const isProcessing = ref(isEmailOAuthCallback.value)
 const isSubmitting = ref(false)
 const needsRegistrationCompletion = ref(false)
 const invitationRequired = ref(false)
@@ -182,6 +192,11 @@ const registrationError = ref('')
 const pendingProvider = ref<'github' | 'google'>('github')
 const redirectTo = ref('/dashboard')
 const invalidCallback = ref(false)
+const callbackError = ref('')
+const show2FAModal = ref(false)
+const totpTempToken = ref('')
+const totpUserEmailMasked = ref('')
+const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null)
 const EMAIL_OAUTH_PENDING_PROVIDER_KEY = 'email_oauth_pending_provider'
 
 type EmailOAuthPendingCompletion = Partial<OAuthTokenResponse> & {
@@ -191,6 +206,9 @@ type EmailOAuthPendingCompletion = Partial<OAuthTokenResponse> & {
   email?: string
   resolved_email?: string
   invitation_required?: boolean
+  requires_2fa?: boolean
+  temp_token?: string
+  user_email_masked?: string
 }
 
 const code = computed(() => (route.query.code as string) || '')
@@ -274,12 +292,46 @@ function redirectProviderCallbackToBackend(provider: 'github' | 'google'): void 
 async function finalizeTokenResponse(tokenResponse: OAuthTokenResponse, redirect: string) {
   persistOAuthTokenContext(tokenResponse)
   await authStore.setToken(tokenResponse.access_token)
+  await completeLogin(redirect)
+}
+
+async function completeLogin(redirect: string) {
   if (typeof window !== 'undefined') {
     window.sessionStorage.removeItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)
   }
   clearAllAffiliateReferralCodes()
   appStore.showSuccess(t('auth.loginSuccess'))
   await router.replace(sanitizeRedirectPath(redirect))
+}
+
+function failCallback(message: string) {
+  callbackError.value = message
+  invalidCallback.value = true
+  needsRegistrationCompletion.value = false
+  isProcessing.value = false
+  window.sessionStorage.removeItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)
+  if (!isEmailOAuthCallback.value) appStore.showError(message)
+}
+
+async function handle2FAVerify(code: string) {
+  totpModalRef.value?.setVerifying?.(true)
+  try {
+    await authStore.login2FA(totpTempToken.value, code)
+    show2FAModal.value = false
+    await completeLogin(redirectTo.value)
+  } catch (error: unknown) {
+    const err = error as { message?: string; response?: { data?: { message?: string } } }
+    totpModalRef.value?.setError?.(err.response?.data?.message || err.message || t('profile.totp.loginFailed'))
+  } finally {
+    totpModalRef.value?.setVerifying?.(false)
+  }
+}
+
+function handle2FACancel() {
+  show2FAModal.value = false
+  totpTempToken.value = ''
+  window.sessionStorage.removeItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)
+  void router.replace('/login')
 }
 
 function hasOAuthTokenResponse(value: Partial<OAuthTokenResponse>): value is OAuthTokenResponse {
@@ -302,6 +354,13 @@ async function resumePendingEmailOAuth() {
     }
     redirectTo.value = sanitizeRedirectPath(completionRedirect)
 
+    if (completion.requires_2fa === true && completion.temp_token?.trim()) {
+      totpTempToken.value = completion.temp_token
+      totpUserEmailMasked.value = completion.user_email_masked || ''
+      show2FAModal.value = true
+      return
+    }
+
     if (completion.error === 'invitation_required' || completion.error === 'registration_completion_required') {
       invitationRequired.value = completion.error === 'invitation_required' || completion.invitation_required === true
       registrationEmail.value = String(completion.resolved_email || completion.email || '').trim()
@@ -310,12 +369,11 @@ async function resumePendingEmailOAuth() {
       return
     }
 
-    appStore.showError(completion.error || t('auth.loginFailed'))
+    failCallback(completion.error || t('auth.loginFailed'))
   } catch (e: unknown) {
     const err = e as { message?: string; response?: { data?: { message?: string } } }
     const message = err.response?.data?.message || err.message || t('auth.loginFailed')
-    appStore.showError(message)
-    invalidCallback.value = true
+    failCallback(message)
   } finally {
     if (!needsRegistrationCompletion.value) {
       isProcessing.value = false
@@ -370,8 +428,18 @@ onMounted(async () => {
   const fragmentErrorDescription =
     params.get('error_description') || params.get('error_message') || ''
 
+  if (tokenResponse || fragmentError) {
+    const callbackURL = new URL(window.location.href)
+    callbackURL.hash = ''
+    window.history.replaceState(window.history.state, '', callbackURL.pathname + callbackURL.search)
+  }
+
   if (fragmentError) {
-    appStore.showError(fragmentErrorDescription || fragmentError)
+    failCallback(fragmentErrorDescription || fragmentError)
+    return
+  }
+  if (isEmailOAuthCallback.value && error.value) {
+    failCallback(String(route.query.error_description || route.query.error_message || error.value))
     return
   }
   if (!tokenResponse) {
@@ -391,15 +459,14 @@ onMounted(async () => {
     await finalizeTokenResponse(tokenResponse, params.get('redirect') || '/dashboard')
   } catch (error: unknown) {
     const message = (error as { message?: string })?.message || t('auth.loginFailed')
-    appStore.showError(message)
-    isProcessing.value = false
+    failCallback(message)
   }
 })
 
 watch(
   error,
   (message) => {
-    if (message) {
+    if (message && !isEmailOAuthCallback.value) {
       appStore.showError(message)
     }
   },

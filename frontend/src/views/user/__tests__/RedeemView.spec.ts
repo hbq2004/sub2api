@@ -55,6 +55,27 @@ describe('RedeemView refresh after redemption', () => {
     vi.restoreAllMocks()
   })
 
+  it('links the four matching cards and the public shop without account data', async () => {
+    const wrapper = mount(RedeemView, {
+      global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true } },
+    })
+    await flushPromises()
+
+    const links = wrapper.findAll('section[aria-labelledby="card-topup-title"] a')
+    expect(links.map(link => link.attributes('href'))).toEqual([
+      'https://catfk.com/shop/E8TRJXZ0',
+      'https://catfk.com/shop/E8TRJXZ0',
+      'https://catfk.com/item/rhk4o5',
+      'https://catfk.com/item/hhkysz',
+      'https://catfk.com/item/ccq9dy',
+      'https://catfk.com/item/c329aj',
+    ])
+    expect(links.every(link => link.attributes('target') === '_blank')).toBe(true)
+    expect(links.every(link => link.attributes('rel') === 'noopener noreferrer')).toBe(true)
+    expect(links.map(link => link.attributes('href')).join(' ')).not.toContain('token=')
+    wrapper.unmount()
+  })
+
   it.each(['balance', 'concurrency', 'subscription'])(
     'keeps a successful %s redemption when profile refresh fails', async (type) => {
       redeem.mockResolvedValue({ type, value: 20, message: 'Code applied' })

@@ -10,8 +10,19 @@
           {{ t('auth.signInToAccount') }}
         </p>
       </div>
+
+      <div
+        v-if="errorMessage"
+        role="alert"
+        aria-live="assertive"
+        class="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/30 dark:text-red-200"
+      >
+        <Icon name="exclamationCircle" size="sm" class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span class="min-w-0 [overflow-wrap:anywhere]">{{ errorMessage }}</span>
+      </div>
+
       <!-- Login Form -->
-      <form @submit.prevent="handleLogin" class="space-y-5">
+      <form @submit.prevent="handleLogin" class="space-y-5" novalidate>
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -27,13 +38,21 @@
               type="email"
               required
               autofocus
+              ref="emailInputRef"
               autocomplete="email"
+              inputmode="email"
               :disabled="authActionDisabled"
               class="input pl-11"
               :class="{ 'input-error': errors.email }"
+              :aria-invalid="Boolean(errors.email)"
+              :aria-describedby="errors.email ? 'email-error' : undefined"
               :placeholder="t('auth.emailPlaceholder')"
+              @input="clearFieldError('email')"
             />
           </div>
+          <p v-if="errors.email" id="email-error" role="alert" class="input-error-text">
+            {{ errors.email }}
+          </p>
         </div>
 
         <!-- Password Input -->
@@ -50,17 +69,24 @@
               v-model="formData.password"
               :type="showPassword ? 'text' : 'password'"
               required
+              ref="passwordInputRef"
               autocomplete="current-password"
               :disabled="authActionDisabled"
               class="input pl-11 pr-11"
               :class="{ 'input-error': errors.password }"
+              :aria-invalid="Boolean(errors.password)"
+              :aria-describedby="errors.password ? 'password-error' : undefined"
               :placeholder="t('auth.passwordPlaceholder')"
+              @input="clearFieldError('password')"
             />
             <button
               type="button"
               @click="showPassword = !showPassword"
               :disabled="authActionDisabled"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              class="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
+              :title="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
+              :aria-pressed="showPassword"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -76,6 +102,9 @@
               {{ t('auth.forgotPassword') }}
             </router-link>
           </div>
+          <p v-if="errors.password" id="password-error" role="alert" class="input-error-text">
+            {{ errors.password }}
+          </p>
         </div>
 
         <!-- Turnstile Widget -->
@@ -95,12 +124,15 @@
             @expire="onTurnstileExpire"
             @error="onTurnstileError"
           />
+          <p v-if="errors.turnstile" role="alert" class="input-error-text">
+            {{ errors.turnstile }}
+          </p>
         </div>
 
         <!-- Submit Button -->
         <button
           type="submit"
-          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
+          :disabled="authActionDisabled || (turnstileActive && !turnstileToken)"
           class="btn btn-primary w-full"
         >
           <svg
@@ -222,7 +254,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, watch } from 'vue'
+import { computed, ref, reactive, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
@@ -268,6 +300,8 @@ const passkeyLoading = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const showPassword = ref<boolean>(false)
 const publicSettingsLoaded = ref<boolean>(false)
+const emailInputRef = ref<HTMLInputElement | null>(null)
+const passwordInputRef = ref<HTMLInputElement | null>(null)
 
 // Public settings
 const registrationEnabled = ref<boolean>(false)
@@ -314,9 +348,12 @@ const actionCaptchaEnabled = computed(
     (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) ||
     aliyunCaptchaReady.value
 )
+const turnstileActive = computed(
+  () => turnstileEnabled.value && Boolean(turnstileSiteKey.value)
+)
 const captchaEnabled = computed(
   () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
+    turnstileActive.value || actionCaptchaEnabled.value
 )
 
 // 2FA state
@@ -362,6 +399,11 @@ const showOAuthLogin = computed(
       githubOAuthEnabled.value ||
       googleOAuthEnabled.value)
 )
+
+function clearFieldError(field: 'email' | 'password'): void {
+  errors[field] = ''
+  errorMessage.value = ''
+}
 
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
@@ -550,9 +592,19 @@ function validateForm(): boolean {
   }
 
   // Turnstile validation
-  if (turnstileEnabled.value && !turnstileToken.value) {
+  if (turnstileActive.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
+  }
+
+  if (!isValid) {
+    void nextTick(() => {
+      if (errors.email) {
+        emailInputRef.value?.focus()
+      } else if (errors.password) {
+        passwordInputRef.value?.focus()
+      }
+    })
   }
 
   return isValid
@@ -581,7 +633,7 @@ async function handleLogin(): Promise<void> {
       email: formData.email,
       password: formData.password,
       turnstile_token:
-        turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
+        turnstileActive.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
       tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
       tencent_captcha_randstr: tencentCaptchaEnabled.value
         ? tencentCaptchaRandstr.value

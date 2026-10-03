@@ -98,6 +98,8 @@ func buildProxyKey(protocol, host string, port int, username, password string) s
 }
 
 func (h *AccountHandler) ExportData(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
 	ctx := c.Request.Context()
 
 	selectedIDs, err := parseAccountIDs(c)

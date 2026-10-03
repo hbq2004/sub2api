@@ -13,7 +13,12 @@ redis_data/
 # Backup files
 *.backup
 *.bak
+tokyo-shared/private-backups/
+tokyo-shared/private-keys/
 
 # Temporary files
 *.tmp
 *.log
+.sync-state.json
+private-credentials/
+*credential-keyring*.json

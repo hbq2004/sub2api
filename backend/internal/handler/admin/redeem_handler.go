@@ -1,11 +1,9 @@
 package admin
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"errors"
-	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -130,6 +128,8 @@ func (h *RedeemHandler) GetByID(c *gin.Context) {
 // Generate handles generating new redeem codes
 // POST /api/v1/admin/redeem-codes/generate
 func (h *RedeemHandler) Generate(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
 	var req GenerateRedeemCodesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -142,7 +142,8 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 		return
 	}
 
-	executeAdminIdempotentJSON(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	var generated []dto.AdminRedeemCode
+	result, err := executeAdminIdempotent(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		codes, execErr := h.adminService.GenerateRedeemCodes(ctx, &service.GenerateRedeemCodesInput{
 			Count:        req.Count,
 			Type:         req.Type,
@@ -156,11 +157,23 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 		}
 
 		out := make([]dto.AdminRedeemCode, 0, len(codes))
+		generated = make([]dto.AdminRedeemCode, 0, len(codes))
 		for i := range codes {
 			out = append(out, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
+			generated = append(generated, *dto.RedeemCodeFromServiceAdminGenerated(&codes[i]))
 		}
 		return out, nil
 	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if result != nil && result.Replayed {
+		c.Header("X-Idempotency-Replayed", "true")
+		response.ErrorFrom(c, infraerrors.Conflict("REDEEM_CODE_ALREADY_GENERATED", "codes were already generated; plaintext cannot be shown again"))
+		return
+	}
+	response.Success(c, generated)
 }
 
 // CreateAndRedeem creates a fixed redeem code and redeems it for a target user in one step.
@@ -388,77 +401,9 @@ func (h *RedeemHandler) GetStats(c *gin.Context) {
 	})
 }
 
-// Export handles exporting redeem codes to CSV
+// Export rejects bulk plaintext exports. Codes are shown only in the immediate
+// response to generation, where administrators can transfer them to fulfillment.
 // GET /api/v1/admin/redeem-codes/export
 func (h *RedeemHandler) Export(c *gin.Context) {
-	codeType := c.Query("type")
-	status := c.Query("status")
-	search := strings.TrimSpace(c.Query("search"))
-	sortBy := c.DefaultQuery("sort_by", "id")
-	sortOrder := c.DefaultQuery("sort_order", "desc")
-	if len(search) > 100 {
-		search = search[:100]
-	}
-
-	// Get all codes without pagination (use large page size)
-	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, search, sortBy, sortOrder)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	// Create CSV buffer
-	var buf bytes.Buffer
-	writer := csv.NewWriter(&buf)
-
-	// Write header
-	if err := writer.Write([]string{"id", "code", "type", "value", "status", "used_by", "used_by_email", "used_at", "expires_at", "created_at"}); err != nil {
-		response.InternalError(c, "Failed to export redeem codes: "+err.Error())
-		return
-	}
-
-	// Write data rows
-	for _, code := range codes {
-		usedBy := ""
-		if code.UsedBy != nil {
-			usedBy = fmt.Sprintf("%d", *code.UsedBy)
-		}
-		usedByEmail := ""
-		if code.User != nil {
-			usedByEmail = code.User.Email
-		}
-		usedAt := ""
-		if code.UsedAt != nil {
-			usedAt = code.UsedAt.Format("2006-01-02 15:04:05")
-		}
-		expiresAt := ""
-		if code.ExpiresAt != nil {
-			expiresAt = code.ExpiresAt.Format("2006-01-02 15:04:05")
-		}
-		if err := writer.Write([]string{
-			fmt.Sprintf("%d", code.ID),
-			code.Code,
-			code.Type,
-			fmt.Sprintf("%.2f", code.Value),
-			code.Status,
-			usedBy,
-			usedByEmail,
-			usedAt,
-			expiresAt,
-			code.CreatedAt.Format("2006-01-02 15:04:05"),
-		}); err != nil {
-			response.InternalError(c, "Failed to export redeem codes: "+err.Error())
-			return
-		}
-	}
-
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		response.InternalError(c, "Failed to export redeem codes: "+err.Error())
-		return
-	}
-
-	c.Header("Content-Type", "text/csv")
-	c.Header("Content-Disposition", "attachment; filename=redeem_codes.csv")
-	c.Data(200, "text/csv", buf.Bytes())
+	response.ErrorFrom(c, infraerrors.New(http.StatusForbidden, "REDEEM_CODE_EXPORT_DISABLED", "plaintext redeem-code export is disabled"))
 }

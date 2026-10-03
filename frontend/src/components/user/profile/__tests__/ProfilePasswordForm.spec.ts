@@ -47,6 +47,16 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 describe('ProfilePasswordForm', () => {
+  it('rejects a multibyte password exceeding bcrypt limits', async () => {
+    changePasswordMock.mockClear()
+    const wrapper = mount(ProfilePasswordForm)
+    await wrapper.get('#old_password').setValue('old-password')
+    await wrapper.get('#new_password').setValue('\u4e2d'.repeat(25))
+    await wrapper.get('#confirm_password').setValue('\u4e2d'.repeat(25))
+    await wrapper.get('form').trigger('submit.prevent')
+    expect(changePasswordMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenLastCalledWith('auth.passwordTooLong')
+  })
   it('shows validation failures as toast messages instead of inline errors', async () => {
     const wrapper = mount(ProfilePasswordForm)
 

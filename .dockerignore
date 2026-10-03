@@ -47,7 +47,13 @@ coverage/
 # Environment files
 .env
 .env.*
+**/.env
+**/*.env
+**/.env.*
+**/*.env.*
 !.env.example
+!**/.env.example
+!**/*.env.example
 
 # 本地闭源插件目录可能包含发布签名私钥，绝不能进入 Docker 构建上下文。
 /plugins/
@@ -72,6 +78,26 @@ deploy/sub2api-sudoers
 deploy/data/
 deploy/postgres_data/
 deploy/redis_data/
+deploy/private-credentials/
+deploy/tokyo-shared/private-backups/
+deploy/tokyo-shared/private-keys/
+deploy/tokyo-shared/private-tools/
+**/*credential-keyring*.json
+**/private-credentials/**
+**/private-backups/**
+**/private-keys/**
+**/*.p7m
+**/*.pem
+**/*.dump
+*.env
+*.p7m
+*.pem
+*.dump
+output/
+.cache/
+.gocache/
+.gomodcache/
+.pnpm-store/
 
 # GoReleaser
 .goreleaser.yaml

@@ -72,6 +72,86 @@ func (s *RedeemCodeRepoSuite) TestCreate() {
 	s.Require().WithinDuration(expiresAt, *got.ExpiresAt, time.Second)
 }
 
+func (s *RedeemCodeRepoSuite) TestProtectedCodeStorageAndLegacyBackfill() {
+	s.repo.protector = testRedeemCodeProtector(s.T())
+	code := &service.RedeemCode{Code: "PROTECTED-CODE", Type: service.RedeemTypeBalance, Value: 10, Status: service.StatusUnused}
+	s.Require().NoError(s.repo.Create(s.ctx, code))
+
+	rows, err := s.client.QueryContext(s.ctx, `SELECT code, code_hash, code_key_version FROM redeem_codes WHERE id = $1`, code.ID)
+	s.Require().NoError(err)
+	s.Require().True(rows.Next())
+	var stored, hash string
+	var version int
+	s.Require().NoError(rows.Scan(&stored, &hash, &version))
+	s.Require().NoError(rows.Close())
+	s.NotEqual(code.Code, stored)
+	s.Equal(s.repo.protector.digest(code.Code), hash)
+	s.Equal(redeemCodeProtectionKeyVersion, version)
+
+	got, err := s.repo.GetByCode(s.ctx, code.Code)
+	s.Require().NoError(err)
+	s.Equal(code.ID, got.ID)
+	s.Equal(code.Code, got.Code)
+	listed, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.RedeemTypeBalance, service.StatusUnused, code.Code)
+	s.Require().NoError(err)
+	s.Equal(int64(1), page.Total)
+	s.Require().Len(listed, 1)
+	s.Equal(code.Code, listed[0].Code)
+	s.Require().NoError(s.repo.verifyProtectedCodes(s.ctx))
+
+	legacy, err := s.client.RedeemCode.Create().SetCode("LEGACY-CODE").SetType(service.RedeemTypeBalance).SetStatus(service.StatusUnused).SetValue(10).Save(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(s.repo.backfillLegacyCodes(s.ctx))
+	got, err = s.repo.GetByCode(s.ctx, "LEGACY-CODE")
+	s.Require().NoError(err)
+	s.Equal(legacy.ID, got.ID)
+	s.Equal("LEGACY-CODE", got.Code)
+	s.Require().NoError(s.repo.verifyProtectedCodes(s.ctx))
+
+	s.repo.protector = &redeemCodeProtector{hmacKey: []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), encryptionKey: []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")}
+	s.Error(s.repo.verifyProtectedCodes(s.ctx))
+}
+
+func (s *RedeemCodeRepoSuite) TestProtectedInvitationTransactionAndBatch() {
+	s.repo.protector = testRedeemCodeProtector(s.T())
+	created := []service.RedeemCode{
+		{Code: "INVITE-PROTECTED", Type: service.RedeemTypeInvitation, Status: service.StatusUnused},
+		{Code: "BATCH-PROTECTED", Type: service.RedeemTypeBalance, Value: 20, Status: service.StatusUnused},
+	}
+	s.Require().NoError(s.repo.CreateBatch(s.ctx, created))
+
+	invitation, err := s.repo.GetByCode(s.ctx, "INVITE-PROTECTED")
+	s.Require().NoError(err)
+	s.Equal(service.StatusUnused, invitation.Status)
+	user := s.createUser("protected-invitation@example.com")
+	s.Require().NoError(s.repo.Use(s.ctx, invitation.ID, user.ID))
+	invitation, err = s.repo.GetByCode(s.ctx, "INVITE-PROTECTED")
+	s.Require().NoError(err)
+	s.Equal(service.StatusUsed, invitation.Status)
+	invitation.Status = service.StatusUnused
+	invitation.UsedBy = nil
+	invitation.UsedAt = nil
+	s.Require().NoError(s.repo.Update(s.ctx, invitation))
+	invitation, err = s.repo.GetByCode(s.ctx, "INVITE-PROTECTED")
+	s.Require().NoError(err)
+	s.Equal(service.StatusUnused, invitation.Status)
+	s.Nil(invitation.UsedBy)
+
+	batch, err := s.repo.GetByCode(s.ctx, "BATCH-PROTECTED")
+	s.Require().NoError(err)
+	s.Equal(20.0, batch.Value)
+}
+
+func (s *RedeemCodeRepoSuite) TestBackfillRejectsInconsistentProtectionMetadata() {
+	s.repo.protector = testRedeemCodeProtector(s.T())
+	legacy, err := s.client.RedeemCode.Create().SetCode("INCONSISTENT-CODE").SetType(service.RedeemTypeBalance).SetStatus(service.StatusUnused).SetValue(10).Save(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.client.ExecContext(s.ctx, `UPDATE redeem_codes SET code_key_version = 1 WHERE id = $1`, legacy.ID)
+	s.Require().NoError(err)
+	s.Error(s.repo.backfillLegacyCodes(s.ctx))
+	s.Error(s.repo.verifyProtectedCodes(s.ctx))
+}
+
 func (s *RedeemCodeRepoSuite) TestCreateBatch() {
 	codes := []service.RedeemCode{
 		{Code: "BATCH-1", Type: service.RedeemTypeBalance, Value: 10, Status: service.StatusUnused},

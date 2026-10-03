@@ -2,12 +2,16 @@ package repository
 
 import (
 	"context"
+	"crypto/hmac"
+	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -15,14 +19,60 @@ import (
 )
 
 type redeemCodeRepository struct {
-	client *dbent.Client
+	client    *dbent.Client
+	protector *redeemCodeProtector
 }
 
 func NewRedeemCodeRepository(client *dbent.Client) service.RedeemCodeRepository {
 	return &redeemCodeRepository{client: client}
 }
 
+func ProvideRedeemCodeRepository(client *dbent.Client, cfg *config.Config) (service.RedeemCodeRepository, error) {
+	protector, err := newRedeemCodeProtectorFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
+		totpKey, err := decodeRedeemCodeKey(cfg.Totp.EncryptionKey, "TOTP_ENCRYPTION_KEY")
+		if err != nil {
+			return nil, err
+		}
+		if hmac.Equal(protector.hmacKey, totpKey) || hmac.Equal(protector.encryptionKey, totpKey) {
+			return nil, errors.New("redeem code protection keys must not reuse the TOTP encryption key")
+		}
+	}
+	repo := &redeemCodeRepository{client: client, protector: protector}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := repo.verifyProtectedCodes(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.backfillLegacyCodes(ctx); err != nil {
+		return nil, err
+	}
+	return repo, nil
+}
+
 func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemCode) error {
+	if r.protector != nil {
+		storedCode, err := r.protector.encrypt(code.Code)
+		if err != nil {
+			return err
+		}
+		client := clientFromContext(ctx, r.client)
+		rows, err := client.QueryContext(ctx, `INSERT INTO redeem_codes (code, code_hash, code_key_version, type, value, status, notes, validity_days, expires_at, used_by, used_at, group_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, created_at`, storedCode, r.protector.digest(code.Code), redeemCodeProtectionKeyVersion, code.Type, code.Value, code.Status, code.Notes, code.ValidityDays, code.ExpiresAt, code.UsedBy, code.UsedAt, code.GroupID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			return sql.ErrNoRows
+		}
+		return rows.Scan(&code.ID, &code.CreatedAt)
+	}
 	created, err := r.client.RedeemCode.Create().
 		SetCode(code.Code).
 		SetType(code.Type).
@@ -46,6 +96,28 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 	if len(codes) == 0 {
 		return nil
 	}
+	if r.protector != nil {
+		if dbent.TxFromContext(ctx) != nil {
+			for i := range codes {
+				if err := r.Create(ctx, &codes[i]); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		tx, err := r.client.Tx(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		txCtx := dbent.NewTxContext(ctx, tx)
+		for i := range codes {
+			if err := r.Create(txCtx, &codes[i]); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	}
 
 	builders := make([]*dbent.RedeemCodeCreate, 0, len(codes))
 	for i := range codes {
@@ -68,7 +140,8 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 }
 
 func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.RedeemCode, error) {
-	m, err := r.client.RedeemCode.Query().
+	client := clientFromContext(ctx, r.client)
+	m, err := client.RedeemCode.Query().
 		Where(redeemcode.IDEQ(id)).
 		Only(ctx)
 	if err != nil {
@@ -77,10 +150,21 @@ func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.
 		}
 		return nil, err
 	}
-	return redeemCodeEntityToService(m), nil
+	code, err := r.entityToService(ctx, m)
+	return code, err
 }
 
 func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*service.RedeemCode, error) {
+	if r.protector != nil {
+		id, err := r.idByHash(ctx, code)
+		if err == sql.ErrNoRows {
+			return nil, service.ErrRedeemCodeNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		return r.GetByID(ctx, id)
+	}
 	m, err := r.client.RedeemCode.Query().
 		Where(redeemcode.CodeEQ(code)).
 		Only(ctx)
@@ -90,7 +174,25 @@ func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*ser
 		}
 		return nil, err
 	}
-	return redeemCodeEntityToService(m), nil
+	return r.entityToService(ctx, m)
+}
+
+func (r *redeemCodeRepository) idByHash(ctx context.Context, code string) (int64, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `SELECT id FROM redeem_codes WHERE code_hash = $1`, r.protector.digest(code))
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		return 0, sql.ErrNoRows
+	}
+	var id int64
+	err = rows.Scan(&id)
+	return id, err
 }
 
 func (r *redeemCodeRepository) Delete(ctx context.Context, id int64) error {
@@ -133,12 +235,25 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 		}
 	}
 	if search != "" {
-		q = q.Where(
-			redeemcode.Or(
+		if r.protector != nil {
+			id, err := r.idByHash(ctx, search)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, nil, err
+			}
+			if err == sql.ErrNoRows {
+				q = q.Where(redeemcode.HasUserWith(user.EmailContainsFold(search)))
+			} else {
+				q = q.Where(redeemcode.Or(
+					redeemcode.IDEQ(id),
+					redeemcode.HasUserWith(user.EmailContainsFold(search)),
+				))
+			}
+		} else {
+			q = q.Where(redeemcode.Or(
 				redeemcode.CodeContainsFold(search),
 				redeemcode.HasUserWith(user.EmailContainsFold(search)),
-			),
-		)
+			))
+		}
 	}
 
 	total, err := q.Count(ctx)
@@ -160,7 +275,10 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 		return nil, nil, err
 	}
 
-	outCodes := redeemCodeEntitiesToService(codes)
+	outCodes, err := r.entitiesToService(ctx, codes)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return outCodes, paginationResultFromTotal(int64(total), params), nil
 }
@@ -184,7 +302,7 @@ func redeemCodeListOrder(params pagination.PaginationParams) []func(*entsql.Sele
 	case "expires_at":
 		field = redeemcode.FieldExpiresAt
 	case "code":
-		field = redeemcode.FieldCode
+		field = redeemcode.FieldID
 	default:
 		field = redeemcode.FieldID
 	}
@@ -196,8 +314,8 @@ func redeemCodeListOrder(params pagination.PaginationParams) []func(*entsql.Sele
 }
 
 func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemCode) error {
-	up := r.client.RedeemCode.UpdateOneID(code.ID).
-		SetCode(code.Code).
+	client := clientFromContext(ctx, r.client)
+	up := client.RedeemCode.UpdateOneID(code.ID).
 		SetType(code.Type).
 		SetValue(code.Value).
 		SetStatus(code.Status).
@@ -354,7 +472,7 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 		return nil, err
 	}
 
-	return redeemCodeEntitiesToService(codes), nil
+	return r.entitiesToService(ctx, codes)
 }
 
 // ListByUserPaginated returns paginated balance/concurrency history for a user.
@@ -383,7 +501,11 @@ func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID i
 		return nil, nil, err
 	}
 
-	return redeemCodeEntitiesToService(codes), paginationResultFromTotal(int64(total), params), nil
+	converted, err := r.entitiesToService(ctx, codes)
+	if err != nil {
+		return nil, nil, err
+	}
+	return converted, paginationResultFromTotal(int64(total), params), nil
 }
 
 // SumPositiveBalanceByUser returns total recharged amount (sum of value > 0 where type is balance/admin_balance).
@@ -435,12 +557,149 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 	return out
 }
 
-func redeemCodeEntitiesToService(models []*dbent.RedeemCode) []service.RedeemCode {
+func (r *redeemCodeRepository) entityToService(ctx context.Context, model *dbent.RedeemCode) (*service.RedeemCode, error) {
+	code := redeemCodeEntityToService(model)
+	if code == nil || r.protector == nil {
+		return code, nil
+	}
+	plain, err := r.plaintextCode(ctx, model.ID, model.Code)
+	if err != nil {
+		return nil, err
+	}
+	code.Code = plain
+	return code, nil
+}
+
+func (r *redeemCodeRepository) entitiesToService(ctx context.Context, models []*dbent.RedeemCode) ([]service.RedeemCode, error) {
 	out := make([]service.RedeemCode, 0, len(models))
 	for i := range models {
-		if s := redeemCodeEntityToService(models[i]); s != nil {
+		if s, err := r.entityToService(ctx, models[i]); err != nil {
+			return nil, err
+		} else if s != nil {
 			out = append(out, *s)
 		}
 	}
-	return out
+	return out, nil
+}
+
+func (r *redeemCodeRepository) plaintextCode(ctx context.Context, id int64, stored string) (string, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `SELECT code_hash, code_key_version FROM redeem_codes WHERE id = $1`, id)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		return "", sql.ErrNoRows
+	}
+	var hash sql.NullString
+	var version int
+	if err := rows.Scan(&hash, &version); err != nil {
+		return "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	if version == redeemCodeProtectionKeyVersion && hash.Valid {
+		return r.protector.decrypt(stored)
+	}
+	if version != 0 || hash.Valid {
+		return "", errors.New("inconsistent redeem code protection metadata")
+	}
+	if err := r.protectLegacyCode(ctx, id, stored); err != nil {
+		return "", err
+	}
+	return stored, nil
+}
+
+func (r *redeemCodeRepository) protectLegacyCode(ctx context.Context, id int64, plaintext string) error {
+	if r.protector == nil {
+		return nil
+	}
+	ciphertext, err := r.protector.encrypt(plaintext)
+	if err != nil {
+		return err
+	}
+	client := clientFromContext(ctx, r.client)
+	result, err := client.ExecContext(ctx, `UPDATE redeem_codes SET code = $1, code_hash = $2, code_key_version = $3 WHERE id = $4 AND code_key_version = 0 AND code_hash IS NULL AND code = $5`, ciphertext, r.protector.digest(plaintext), redeemCodeProtectionKeyVersion, id, plaintext)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return errors.New("redeem code changed during legacy migration")
+	}
+	return nil
+}
+
+func (r *redeemCodeRepository) backfillLegacyCodes(ctx context.Context) error {
+	if r.protector == nil {
+		return nil
+	}
+	rows, err := r.client.QueryContext(ctx, `SELECT id, code, code_hash, code_key_version FROM redeem_codes WHERE code_key_version = 0 OR code_hash IS NULL`)
+	if err != nil {
+		return err
+	}
+	type legacyCode struct {
+		id   int64
+		code string
+	}
+	legacy := make([]legacyCode, 0)
+	for rows.Next() {
+		var id int64
+		var plaintext string
+		var hash sql.NullString
+		var version int
+		if err := rows.Scan(&id, &plaintext, &hash, &version); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if version != 0 || hash.Valid {
+			_ = rows.Close()
+			return errors.New("inconsistent redeem code protection metadata")
+		}
+		legacy = append(legacy, legacyCode{id: id, code: plaintext})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range legacy {
+		if err := r.protectLegacyCode(ctx, item.id, item.code); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *redeemCodeRepository) verifyProtectedCodes(ctx context.Context) error {
+	rows, err := r.client.QueryContext(ctx, `SELECT code, code_hash, code_key_version FROM redeem_codes WHERE code_key_version > 0`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ciphertext, digest string
+		var version int
+		if err := rows.Scan(&ciphertext, &digest, &version); err != nil {
+			return err
+		}
+		if version != redeemCodeProtectionKeyVersion {
+			return errors.New("unsupported redeem code key version")
+		}
+		plaintext, err := r.protector.decrypt(ciphertext)
+		if err != nil || !hmac.Equal([]byte(digest), []byte(r.protector.digest(plaintext))) {
+			return errors.New("redeem code protection key mismatch or corrupted record")
+		}
+	}
+	return rows.Err()
 }

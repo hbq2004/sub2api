@@ -51,7 +51,7 @@ const (
 
 // ListOpenCodeGoUsageGroupAccounts resolves every sibling for all supplied
 // identities with one ID query and one batch hydration. API keys are query
-// parameters only; no derived shared key is persisted.
+// parameters in legacy mode and stable HMAC identities in protected mode.
 func (r *accountRepository) ListOpenCodeGoUsageGroupAccounts(ctx context.Context, accounts []*service.Account) ([]service.Account, error) {
 	if r == nil || r.sql == nil {
 		return nil, service.ErrOpenCodeGoUsageUnavailable
@@ -70,7 +70,7 @@ func (r *accountRepository) ListOpenCodeGoUsageGroupAccounts(ctx context.Context
 			continue
 		}
 		seen[apiKey] = struct{}{}
-		keys = append(keys, apiKey)
+		keys = append(keys, r.protector.LookupCandidates(apiKey)...)
 	}
 	if len(keys) == 0 {
 		return []service.Account{}, nil
@@ -207,7 +207,7 @@ func (r *accountRepository) updateOpenCodeGoUsageGroup(
 		if !matchesProxy {
 			return service.ErrOpenCodeGoUsageIdentityChanged
 		}
-		members, err := lockOpenCodeGoUsageGroup(txCtx, client, account, apiKey)
+		members, err := r.lockOpenCodeGoUsageGroup(txCtx, client, account, apiKey)
 		if err != nil {
 			return err
 		}
@@ -258,9 +258,9 @@ func (r *accountRepository) updateOpenCodeGoUsageGroup(
 				updated_at = NOW()
 			WHERE deleted_at IS NULL
 				AND `+opencodeGoUsageEligibleSQL+`
-				AND credentials ->> 'api_key' = $2
+				AND `+r.apiKeyMatchSQL("credentials ->> 'api_key'", "$2")+`
 				AND id = ANY($3)
-		`, string(encoded), apiKey, pq.Array(memberIDs))
+		`, string(encoded), r.apiKeyMatchArg(apiKey), pq.Array(memberIDs))
 		if err != nil {
 			return err
 		}
@@ -291,13 +291,13 @@ func (r *accountRepository) updateOpenCodeGoUsageGroup(
 	return tx.Commit()
 }
 
-func lockOpenCodeGoUsageGroup(
+func (r *accountRepository) lockOpenCodeGoUsageGroup(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
 	apiKey string,
 ) ([]lockedOpenCodeGoUsageMember, error) {
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	credentials, err := r.credentialSnapshotJSON(ctx, client, account.ID, account.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -318,10 +318,10 @@ func lockOpenCodeGoUsageGroup(
 		FROM accounts
 		WHERE deleted_at IS NULL
 			AND `+opencodeGoUsageEligibleSQL+`
-			AND credentials ->> 'api_key' = $1
+			AND `+r.apiKeyMatchSQL("credentials ->> 'api_key'", "$1")+`
 		ORDER BY id
 		FOR NO KEY UPDATE
-	`, apiKey, account.ID, account.Platform, account.Type, string(credentials), proxyID)
+	`, r.apiKeyMatchArg(apiKey), account.ID, account.Platform, account.Type, string(credentials), proxyID)
 	if err != nil {
 		return nil, err
 	}

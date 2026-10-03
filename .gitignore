@@ -133,9 +133,11 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/RELEASE_GOVERNANCE.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/CARD_TOPUP_CN.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
@@ -161,3 +163,11 @@ issues/
 .vite/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/
+
+# Local package caches used by offline checks
+/.gomodcache/
+/.pnpm-store/
+
+# Upstream credential encryption roots must stay outside Git.
+/private-credentials/
+**/*credential-keyring*.json

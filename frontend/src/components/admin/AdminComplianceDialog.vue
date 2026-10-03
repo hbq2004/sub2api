@@ -106,6 +106,7 @@ import Input from '@/components/common/Input.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAdminComplianceStore, useAppStore, useAuthStore } from '@/stores'
 import { getLocale } from '@/i18n'
+import { replaceSiteBranding } from '@/utils/branding'
 import zhDocument from '../../../../docs/legal/admin-compliance.zh.md?raw'
 import enDocument from '../../../../docs/legal/admin-compliance.en.md?raw'
 
@@ -138,7 +139,7 @@ const inputError = computed(() => {
   return t('adminCompliance.inputMismatch')
 })
 const renderedDocument = computed(() => {
-  const html = marked.parse(currentDocument.value) as string
+  const html = marked.parse(replaceSiteBranding(currentDocument.value, appStore.siteName)) as string
   return DOMPurify.sanitize(html)
 })
 
