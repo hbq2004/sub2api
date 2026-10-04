@@ -1,0 +1,42 @@
+name: Release provenance gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require credential protection sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            backend/internal/repository/account_credential_protection.go \
+            backend/internal/repository/account_credential_migration.go \
+            backend/internal/pkg/credentialcrypto/protector.go \
+            backend/cmd/credential-migrate/main.go; do
+            test -f "$path"
+          done
+      - name: Require image source revision labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'org.opencontainers.image.revision' Dockerfile
+          grep -q 'org.opencontainers.image.revision' deploy/Dockerfile
+          grep -q '^\*\*/\.env$' .dockerignore
+          grep -q '^\*\*/\*\.env$' .dockerignore
+      - name: Record immutable source revision
+        run: git rev-parse --verify HEAD
+      - name: Verify synthetic Docker build context
+        shell: pwsh
+        run: ./deploy/Test-DockerContext.ps1

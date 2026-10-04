@@ -169,6 +169,10 @@ func (s *refreshTokenCacheStub) IsTokenInFamily(context.Context, string, string)
 	return false, nil
 }
 
+func (s *refreshTokenCacheStub) IsTokenFamilyActive(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (s *emailCacheStub) GetVerificationCode(ctx context.Context, email string) (*VerificationCodeData, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -181,6 +185,10 @@ func (s *emailCacheStub) SetVerificationCode(ctx context.Context, email string, 
 }
 
 func (s *emailCacheStub) DeleteVerificationCode(ctx context.Context, email string) error {
+	return nil
+}
+
+func (s *emailCacheStub) DeleteVerificationCodeIfMatch(context.Context, string, string) error {
 	return nil
 }
 
@@ -524,14 +532,14 @@ func TestAuthService_SendVerifyCode_NonWhitelistDomainRejectedWhenQuotaDisabled(
 	require.ErrorIs(t, err, ErrEmailSuffixNotAllowed)
 }
 
-func TestAuthService_SendVerifyCodeAsync_NonWhitelistDomainRejectedWhenQuotaDisabled(t *testing.T) {
+func TestAuthService_SendVerifyCodeWithResult_NonWhitelistDomainRejectedWhenQuotaDisabled(t *testing.T) {
 	repo := &userRepoStub{domainCounts: map[string]int{"custom.example": 0}}
 	svc := newAuthService(repo, map[string]string{
 		SettingKeyRegistrationEnabled:              "true",
 		SettingKeyRegistrationEmailSuffixWhitelist: `["@example.com"]`,
 	}, nil, nil)
 
-	_, err := svc.SendVerifyCodeAsync(context.Background(), "user@custom.example")
+	_, err := svc.SendVerifyCodeWithResult(context.Background(), "user@custom.example")
 	require.ErrorIs(t, err, ErrEmailSuffixNotAllowed)
 }
 
@@ -585,7 +593,7 @@ func TestAuthService_SendVerifyCode_NonWhitelistDomainLimit(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
 }
 
-func TestAuthService_SendVerifyCodeAsync_NonWhitelistDomainLimit(t *testing.T) {
+func TestAuthService_SendVerifyCodeWithResult_NonWhitelistDomainLimit(t *testing.T) {
 	repo := &userRepoStub{domainCounts: map[string]int{"custom.example": 1}}
 	svc := newAuthService(repo, map[string]string{
 		SettingKeyRegistrationEnabled:                 "true",
@@ -593,7 +601,7 @@ func TestAuthService_SendVerifyCodeAsync_NonWhitelistDomainLimit(t *testing.T) {
 		SettingKeyRegistrationEmailDomainQuotaEnabled: "true",
 	}, nil, nil)
 
-	_, err := svc.SendVerifyCodeAsync(context.Background(), "user@custom.example")
+	_, err := svc.SendVerifyCodeWithResult(context.Background(), "user@custom.example")
 	require.ErrorIs(t, err, ErrEmailDomainRegistrationLimit)
 }
 
@@ -1009,4 +1017,20 @@ func TestCanBypassRegistrationDisabledForOAuth(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func (s *emailCacheStub) IncrVerificationCodeAttempts(context.Context, string) (int, error) {
+	if s.data == nil {
+		return 0, errors.New("verification code not found")
+	}
+	s.data.Attempts++
+	return s.data.Attempts, nil
+}
+
+func (s *emailCacheStub) IncrNotifyVerifyCodeAttempts(context.Context, string) (int, error) {
+	return 0, errors.New("notify verification code not found")
+}
+
+func (s *emailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }

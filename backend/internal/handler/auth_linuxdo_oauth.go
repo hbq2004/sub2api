@@ -859,7 +859,10 @@ func redirectWithFragment(c *gin.Context, frontendCallback string, fragment url.
 		c.Redirect(http.StatusFound, linuxDoOAuthDefaultRedirectTo)
 		return
 	}
-	u.Fragment = fragment.Encode()
+	encoded := fragment.Encode()
+	// URL.String expects a decoded Fragment; keep RawFragment for the browser's single decode.
+	u.Fragment, _ = url.PathUnescape(encoded)
+	u.RawFragment = encoded
 	c.Header("Cache-Control", "no-store")
 	c.Header("Pragma", "no-cache")
 	c.Redirect(http.StatusFound, u.String())

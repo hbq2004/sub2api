@@ -1,0 +1,25 @@
+services:
+  sub2api:
+    image: ${SUB2API_LOCAL_IMAGE:?Run Update-Local.ps1 to install a tested local release}
+    pull_policy: never
+    # Local is started manually only for updates or debugging.
+    restart: "no"
+    # The base local compose file declares these variables with empty defaults.
+    # Repeat them here so the private release environment wins during promotion.
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Local JWT secret is required}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?Local TOTP key is required}
+      REDEEM_CODE_HMAC_KEY: ${REDEEM_CODE_HMAC_KEY:?Local redeem-code HMAC key is required}
+      REDEEM_CODE_ENCRYPTION_KEY: ${REDEEM_CODE_ENCRYPTION_KEY:?Local redeem-code encryption key is required}
+      ACCOUNT_CREDENTIAL_KEYRING_FILE: ${ACCOUNT_CREDENTIAL_KEYRING_FILE:-/run/sub2api-secrets/upstream-credential-keyring.json}
+      ACCOUNT_CREDENTIAL_ENCRYPTION_REQUIRED: ${ACCOUNT_CREDENTIAL_ENCRYPTION_REQUIRED:-true}
+      ACCOUNT_CREDENTIAL_ALLOW_LEGACY: ${ACCOUNT_CREDENTIAL_ALLOW_LEGACY:-false}
+    env_file:
+      - ./private-credentials/local-runtime.env
+    volumes:
+      - local-credential-keys:/run/sub2api-secrets:ro
+
+volumes:
+  local-credential-keys:
+    external: true
+    name: sub2api-local-credential-keys

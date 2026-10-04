@@ -33,7 +33,7 @@ func ollamaCloudBaseURLMatchesSQL(expression string) string {
 
 // ListOllamaCloudUsageGroupAccounts resolves every sibling for all supplied
 // identities with one ID query and one batch hydration. API keys are query
-// parameters only; no derived shared key is persisted.
+// parameters in legacy mode and stable HMAC identities in protected mode.
 func (r *accountRepository) ListOllamaCloudUsageGroupAccounts(ctx context.Context, accounts []*service.Account) ([]service.Account, error) {
 	if r == nil || r.sql == nil {
 		return nil, service.ErrOllamaCloudUsageUnavailable
@@ -52,7 +52,7 @@ func (r *accountRepository) ListOllamaCloudUsageGroupAccounts(ctx context.Contex
 			continue
 		}
 		seen[apiKey] = struct{}{}
-		keys = append(keys, apiKey)
+		keys = append(keys, r.protector.LookupCandidates(apiKey)...)
 	}
 	if len(keys) == 0 {
 		return []service.Account{}, nil
@@ -194,7 +194,7 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 		if !matchesProxy {
 			return service.ErrOllamaCloudUsageIdentityChanged
 		}
-		members, err := lockOllamaCloudUsageGroup(txCtx, client, account, apiKey)
+		members, err := r.lockOllamaCloudUsageGroup(txCtx, client, account, apiKey)
 		if err != nil {
 			return err
 		}
@@ -248,9 +248,9 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 				updated_at = NOW()
 			WHERE deleted_at IS NULL
 				AND `+ollamaCloudUsageEligibleSQL+`
-				AND credentials ->> 'api_key' = $2
+				AND `+r.apiKeyMatchSQL("credentials ->> 'api_key'", "$2")+`
 				AND id = ANY($3)
-		`, string(encoded), apiKey, pq.Array(memberIDs))
+		`, string(encoded), r.apiKeyMatchArg(apiKey), pq.Array(memberIDs))
 		if err != nil {
 			return err
 		}
@@ -281,13 +281,13 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 	return tx.Commit()
 }
 
-func lockOllamaCloudUsageGroup(
+func (r *accountRepository) lockOllamaCloudUsageGroup(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
 	apiKey string,
 ) ([]lockedOllamaCloudUsageMember, error) {
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	credentials, err := r.credentialSnapshotJSON(ctx, client, account.ID, account.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -309,10 +309,10 @@ func lockOllamaCloudUsageGroup(
 		FROM accounts
 		WHERE deleted_at IS NULL
 			AND `+ollamaCloudUsageEligibleSQL+`
-			AND credentials ->> 'api_key' = $1
+			AND `+r.apiKeyMatchSQL("credentials ->> 'api_key'", "$1")+`
 		ORDER BY id
 		FOR NO KEY UPDATE
-	`, apiKey, account.ID, account.Platform, account.Type, string(credentials), proxyID)
+	`, r.apiKeyMatchArg(apiKey), account.ID, account.Platform, account.Type, string(credentials), proxyID)
 	if err != nil {
 		return nil, err
 	}

@@ -48,20 +48,15 @@ func (s *AuthService) LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(
 	return s.loginOrRegisterVerifiedEmailOAuth(ctx, input, invitationCode, affiliateCode, promoCode)
 }
 
-func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
-	ctx context.Context,
-	input EmailOAuthIdentityInput,
-	invitationCode string,
-	affiliateCode string,
-	promoCode string,
-) (*TokenPair, *User, error) {
+// ResolveVerifiedEmailOAuthUser verifies the external identity without binding it or issuing tokens.
+func (s *AuthService) ResolveVerifiedEmailOAuthUser(ctx context.Context, input EmailOAuthIdentityInput) (*User, error) {
 	if s == nil || s.userRepo == nil || s.entClient == nil {
-		return nil, nil, ErrServiceUnavailable
+		return nil, ErrServiceUnavailable
 	}
 
 	providerType := normalizeOAuthSignupSource(input.ProviderType)
 	if providerType != "github" && providerType != "google" && providerType != "oidc" {
-		return nil, nil, infraerrors.BadRequest("OAUTH_PROVIDER_INVALID", "oauth provider is invalid")
+		return nil, infraerrors.BadRequest("OAUTH_PROVIDER_INVALID", "oauth provider is invalid")
 	}
 	providerKey := strings.TrimSpace(input.ProviderKey)
 	if providerKey == "" {
@@ -69,50 +64,73 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	}
 	providerSubject := strings.TrimSpace(input.ProviderSubject)
 	if providerSubject == "" {
-		return nil, nil, infraerrors.BadRequest("OAUTH_SUBJECT_MISSING", "oauth subject is missing")
+		return nil, infraerrors.BadRequest("OAUTH_SUBJECT_MISSING", "oauth subject is missing")
 	}
 	if !input.EmailVerified {
-		return nil, nil, infraerrors.Forbidden("OAUTH_EMAIL_NOT_VERIFIED", "oauth email is not verified")
+		return nil, infraerrors.Forbidden("OAUTH_EMAIL_NOT_VERIFIED", "oauth email is not verified")
 	}
 
 	email := strings.TrimSpace(strings.ToLower(input.Email))
 	if email == "" || len(email) > 255 {
-		return nil, nil, infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
+		return nil, infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
 	}
 	if _, err := mail.ParseAddress(email); err != nil {
-		return nil, nil, infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
+		return nil, infraerrors.BadRequest("INVALID_EMAIL", "invalid email")
 	}
 	if isReservedEmail(email) {
-		return nil, nil, ErrEmailReserved
+		return nil, ErrEmailReserved
 	}
 	if err := s.validateRegistrationEmailPolicy(ctx, email); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	identityUser, err := s.findEmailOAuthIdentityOwner(ctx, providerType, providerKey, providerSubject)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
-		return nil, nil, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
+		return nil, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
 	}
 
 	user := identityUser
-	created := false
 	if user == nil {
 		user, err = s.userRepo.GetByEmail(ctx, email)
 		if err != nil {
 			if errors.Is(err, ErrUserNotFound) {
-				user, err = s.createEmailOAuthUser(ctx, email, input.Username, providerType, invitationCode, affiliateCode)
-				if err != nil {
-					return nil, nil, err
-				}
-				created = true
-			} else {
-				logger.LegacyPrintf("service.auth", "[Auth] Database error during %s oauth login: %v", providerType, err)
-				return nil, nil, ErrServiceUnavailable
+				return nil, nil
 			}
+			logger.LegacyPrintf("service.auth", "[Auth] Database error during %s oauth login: %v", providerType, err)
+			return nil, ErrServiceUnavailable
 		}
+	}
+	if !user.IsActive() {
+		return nil, ErrUserNotActive
+	}
+	return user, nil
+}
+
+func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
+	ctx context.Context,
+	input EmailOAuthIdentityInput,
+	invitationCode string,
+	affiliateCode string,
+	promoCode string,
+) (*TokenPair, *User, error) {
+	user, err := s.ResolveVerifiedEmailOAuthUser(ctx, input)
+	if err != nil {
+		return nil, nil, err
+	}
+	providerType := normalizeOAuthSignupSource(input.ProviderType)
+	providerKey := firstNonEmpty(strings.TrimSpace(input.ProviderKey), providerType)
+	providerSubject := strings.TrimSpace(input.ProviderSubject)
+	email := strings.TrimSpace(strings.ToLower(input.Email))
+	created := false
+	if user == nil {
+		user, err = s.createEmailOAuthUser(ctx, email, input.Username, providerType, invitationCode, affiliateCode)
+		if err != nil {
+			return nil, nil, err
+		}
+		created = true
 	}
 
 	if !user.IsActive() {

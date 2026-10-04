@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Sub2API backup
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+Unit=sub2api-backup.service
+
+[Install]
+WantedBy=timers.target

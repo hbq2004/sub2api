@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import { applySiteBranding } from '@/utils/branding'
 import { refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
 export type { RefreshTokenResponse } from './tokenRefresh'
 import type {
@@ -352,7 +353,7 @@ export function isAuthenticated(): boolean {
  */
 export async function getPublicSettings(): Promise<PublicSettings> {
   const { data } = await apiClient.get<PublicSettings>('/settings/public')
-  return data
+  return applySiteBranding(data)
 }
 
 export type WeChatOAuthMode = 'open' | 'mp'
@@ -473,7 +474,9 @@ export function resolveWeChatOAuthStartStrict(
 export async function sendVerifyCode(
   request: SendVerifyCodeRequest
 ): Promise<SendVerifyCodeResponse> {
-  const { data } = await apiClient.post<SendVerifyCodeResponse>('/auth/send-verify-code', request)
+  const { data } = await apiClient.post<SendVerifyCodeResponse>('/auth/send-verify-code', request, {
+    timeout: 60000
+  })
   return data
 }
 

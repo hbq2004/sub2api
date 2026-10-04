@@ -70,6 +70,9 @@
 
       <!-- Form State -->
       <form v-else @submit.prevent="handleSubmit" class="space-y-5">
+        <p v-if="errorMessage" role="alert" class="break-words text-sm text-red-600 dark:text-red-400">
+          {{ errorMessage }}
+        </p>
         <!-- Email (readonly) -->
         <div>
           <label for="email" class="input-label">
@@ -207,6 +210,9 @@ import { AuthLayout } from '@/components/layout'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { resetPassword } from '@/api/auth'
+import { extractApiErrorCode } from '@/utils/apiError'
+import { buildAuthErrorMessage } from '@/utils/authError'
+import { isPasswordTooLong } from '@/utils/password'
 
 const { t } = useI18n()
 
@@ -277,6 +283,9 @@ function validateForm(): boolean {
   } else if (formData.password.length < 6) {
     errors.password = t('auth.passwordMinLength')
     isValid = false
+  } else if (isPasswordTooLong(formData.password)) {
+    errors.password = t('auth.passwordTooLong')
+    isValid = false
   }
 
   // Confirm password validation
@@ -294,6 +303,8 @@ function validateForm(): boolean {
 // ==================== Form Handlers ====================
 
 async function handleSubmit(): Promise<void> {
+  if (isLoading.value || isInvalidLink.value) return
+
   errorMessage.value = ''
 
   if (!validateForm()) {
@@ -312,17 +323,10 @@ async function handleSubmit(): Promise<void> {
     isSuccess.value = true
     appStore.showSuccess(t('auth.passwordResetSuccess'))
   } catch (error: unknown) {
-    const err = error as { message?: string; response?: { data?: { detail?: string; code?: string } } }
-
-    // Check for invalid/expired token error
-    if (err.response?.data?.code === 'INVALID_RESET_TOKEN') {
+    if (extractApiErrorCode(error) === 'INVALID_RESET_TOKEN') {
       errorMessage.value = t('auth.invalidOrExpiredToken')
-    } else if (err.response?.data?.detail) {
-      errorMessage.value = err.response.data.detail
-    } else if (err.message) {
-      errorMessage.value = err.message
     } else {
-      errorMessage.value = t('auth.resetPasswordFailed')
+      errorMessage.value = buildAuthErrorMessage(error, { fallback: t('auth.resetPasswordFailed') })
     }
 
     appStore.showError(errorMessage.value)

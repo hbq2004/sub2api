@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,85 @@ func (s *passkeyCaptchaVerifierStub) VerifyTicket(_ context.Context, _ service.T
 type passkeyBeginSessionStoreStub struct {
 	service.PasskeySessionStore
 	storeCalls int
+}
+
+type passkeyGuardUserRepo struct {
+	service.UserRepository
+	user *service.User
+}
+
+func (r *passkeyGuardUserRepo) GetByID(context.Context, int64) (*service.User, error) {
+	return r.user, nil
+}
+
+func (r *passkeyGuardUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
+type passkeyGuardCache struct {
+	service.TotpCache
+	granted bool
+}
+
+func (c *passkeyGuardCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+	return c.granted, nil
+}
+
+func newPasskeyGuardHandler(totpEnabled, granted bool) *PasskeyHandler {
+	repo := &passkeyGuardUserRepo{user: &service.User{ID: 1, Role: service.RoleAdmin, TotpEnabled: totpEnabled}}
+	settings := service.NewSettingService(&passkeySwitchSettingRepo{value: "true"}, &config.Config{
+		WebAuthn: config.WebAuthnConfig{Enabled: true},
+	})
+	return NewPasskeyHandler(nil, nil, settings,
+		service.NewTotpService(repo, nil, &passkeyGuardCache{granted: granted}, settings, nil, nil),
+		service.NewUserService(repo, nil, nil, nil))
+}
+
+func newPasskeyGuardContext(method, path, role string) (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(method, path, nil)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 1})
+	c.Set(string(middleware2.ContextKeyUserRole), role)
+	c.Set(string(middleware2.ContextKeySessionID), "passkey-test-session")
+	return c, recorder
+}
+
+func TestAdminPasskeyMutationsRequireTotpStepUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := newPasskeyGuardHandler(true, false)
+	for _, tt := range []struct {
+		name, method, path string
+		invoke             func(*gin.Context)
+	}{
+		{"begin registration", http.MethodPost, "/user/passkeys/register/begin", h.BeginRegistration},
+		{"finish registration", http.MethodPost, "/user/passkeys/register/finish", h.FinishRegistration},
+		{"delete", http.MethodDelete, "/user/passkeys/1", h.Delete},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, recorder := newPasskeyGuardContext(tt.method, tt.path, service.RoleAdmin)
+			tt.invoke(c)
+			require.Equal(t, http.StatusForbidden, recorder.Code)
+			require.Contains(t, recorder.Body.String(), "STEP_UP_REQUIRED")
+		})
+	}
+}
+
+func TestAdminPasskeyStepUpCannotBeBypassedByMissingTotp(t *testing.T) {
+	h := newPasskeyGuardHandler(false, true)
+	c, recorder := newPasskeyGuardContext(http.MethodPost, "/user/passkeys/register/begin", service.RoleAdmin)
+	require.False(t, h.requireAdminPasskeyStepUp(c))
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "STEP_UP_TOTP_NOT_ENABLED")
+}
+
+func TestAdminPasskeyStepUpAllowsGrantAndPreservesRegularUserFlow(t *testing.T) {
+	h := newPasskeyGuardHandler(true, true)
+	admin, _ := newPasskeyGuardContext(http.MethodPost, "/user/passkeys/register/begin", service.RoleAdmin)
+	require.True(t, h.requireAdminPasskeyStepUp(admin))
+
+	user, _ := newPasskeyGuardContext(http.MethodPost, "/user/passkeys/register/begin", service.RoleUser)
+	require.True(t, newPasskeyGuardHandler(false, false).requireAdminPasskeyStepUp(user))
 }
 
 func (s *passkeyBeginSessionStoreStub) Store(context.Context, *service.PasskeySession, time.Duration) (string, error) {
@@ -85,7 +165,7 @@ func TestPasskeyBeginLoginRejectsDisabledAdminSwitch(t *testing.T) {
 	settings := service.NewSettingService(repo, &config.Config{
 		WebAuthn: config.WebAuthnConfig{Enabled: true},
 	})
-	handler := NewPasskeyHandler(nil, nil, settings)
+	handler := NewPasskeyHandler(nil, nil, settings, nil, nil)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
 	ginContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/passkey/login/begin", nil)
@@ -102,7 +182,7 @@ func TestPasskeyBeginLoginReportsSettingStoreFailure(t *testing.T) {
 		&passkeySwitchSettingRepo{err: errors.New("database unavailable")},
 		&config.Config{WebAuthn: config.WebAuthnConfig{Enabled: true}},
 	)
-	handler := NewPasskeyHandler(nil, nil, settings)
+	handler := NewPasskeyHandler(nil, nil, settings, nil, nil)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
 	ginContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/passkey/login/begin", nil)
@@ -138,7 +218,7 @@ func newTencentProtectedPasskeyHandler(t *testing.T) (*PasskeyHandler, *passkeyC
 	sessions := &passkeyBeginSessionStoreStub{}
 	passkeys, err := service.NewPasskeyService(cfg, nil, sessions, nil)
 	require.NoError(t, err)
-	return NewPasskeyHandler(passkeys, authService, settings), verifier, sessions
+	return NewPasskeyHandler(passkeys, authService, settings, nil, nil), verifier, sessions
 }
 
 func newPasskeyBeginLoginContext(body string) (*gin.Context, *httptest.ResponseRecorder) {
@@ -183,7 +263,7 @@ func TestPasskeyBeginLoginAcceptsTencentCaptchaProofBeforeCeremony(t *testing.T)
 
 func TestPasskeyCredentialListRemainsAvailableWhenSignInDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewPasskeyHandler(nil, nil, nil)
+	handler := NewPasskeyHandler(nil, nil, nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
 	ginContext.Request = httptest.NewRequest(http.MethodGet, "/api/v1/user/passkeys", nil)

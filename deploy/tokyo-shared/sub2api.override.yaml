@@ -1,0 +1,19 @@
+services:
+  sub2api:
+    image: sub2api:site-audit-20261002
+    environment:
+      SERVER_TRUSTED_PROXIES: 172.19.0.3/32
+      WEBAUTHN_ENABLED: "true"
+      WEBAUTHN_RP_ID: api.zynexus.top
+      WEBAUTHN_RP_ORIGINS: https://api.zynexus.top
+    networks:
+      - sub2api-network
+      - zynexus-edge
+  postgres:
+    image: postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+  redis:
+    image: redis@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+
+networks:
+  zynexus-edge:
+    external: true

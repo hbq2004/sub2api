@@ -2,9 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LoginView from '@/views/auth/LoginView.vue'
 
-const { getPublicSettingsMock, pushMock } = vi.hoisted(() => ({
+const { getPublicSettingsMock, pushMock, loginMock } = vi.hoisted(() => ({
   getPublicSettingsMock: vi.fn(),
-  pushMock: vi.fn()
+  pushMock: vi.fn(),
+  loginMock: vi.fn()
 }))
 
 const publicSettings = {
@@ -50,7 +51,7 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
-    login: vi.fn(),
+    login: loginMock,
     loginWithPasskey: vi.fn(),
     login2FA: vi.fn()
   }),
@@ -94,6 +95,7 @@ describe('LoginView registration entry', () => {
   beforeEach(() => {
     getPublicSettingsMock.mockReset()
     pushMock.mockReset()
+    loginMock.mockReset()
     getPublicSettingsMock.mockResolvedValue(publicSettings)
   })
 
@@ -114,5 +116,66 @@ describe('LoginView registration entry', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('auth.signUp')
+  })
+
+  it('renders inline validation feedback and marks invalid fields', async () => {
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(wrapper.get('#email-error').text()).toContain('auth.emailRequired')
+    expect(wrapper.get('#password-error').text()).toContain('auth.passwordRequired')
+    expect(wrapper.get('#email').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.get('#password').attributes('aria-invalid')).toBe('true')
+  })
+
+  it('does not deadlock the submit action when Turnstile has no site key', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: true,
+      turnstile_site_key: ''
+    })
+
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps Turnstile-protected submissions blocked until verification completes', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: true,
+      turnstile_site_key: 'configured-site-key'
+    })
+
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('test-password')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(loginMock).not.toHaveBeenCalled()
+  })
+
+  it('shows a server error in the form and clears it when credentials change', async () => {
+    loginMock.mockRejectedValueOnce(new Error('Invalid credentials'))
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('test-password')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('Invalid credentials')
+    expect(pushMock).not.toHaveBeenCalled()
+
+    await wrapper.get('#password').setValue('corrected-test-password')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
 })

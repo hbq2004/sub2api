@@ -390,8 +390,8 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 	// probe 分支（含 quota_probe 的探活部分）仍需 endpoint + api_key；
 	// quota 模式 endpoint/api_key 留空，避免要求用户填无意义的占位值。
 	if checkMode != MonitorCheckModeQuota {
-		if err := validateEndpoint(p.Endpoint); err != nil {
-			return err
+		if strings.TrimSpace(p.Endpoint) == "" {
+			return ErrChannelMonitorInvalidEndpoint
 		}
 		if strings.TrimSpace(p.APIKey) == "" {
 			return ErrChannelMonitorMissingAPIKey
@@ -402,6 +402,9 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 	}
 	if normalizeMonitorPrimaryModel(p.Provider, checkMode, p.PrimaryModel) == "" {
 		return ErrChannelMonitorMissingPrimaryModel
+	}
+	if checkMode != MonitorCheckModeQuota {
+		return validateEndpoint(p.Endpoint)
 	}
 	return nil
 }

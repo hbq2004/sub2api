@@ -76,6 +76,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { userAPI } from '@/api'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { isPasswordTooLong } from '@/utils/password'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -93,6 +94,7 @@ const form = ref({
 })
 
 const handleChangePassword = async () => {
+  if (loading.value) return
   if (form.value.new_password !== form.value.confirm_password) {
     appStore.showError(t('profile.passwordsNotMatch'))
     return
@@ -100,6 +102,11 @@ const handleChangePassword = async () => {
 
   if (form.value.new_password.length < 8) {
     appStore.showError(t('profile.passwordTooShort'))
+    return
+  }
+
+  if (isPasswordTooLong(form.value.new_password)) {
+    appStore.showError(t('auth.passwordTooLong'))
     return
   }
 

@@ -97,6 +97,13 @@ func (h *AuthHandler) emailOAuthStart(c *gin.Context, provider string) {
 }
 
 func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
+	// Clear response cookies before redirects write headers; request cookies remain available for validation.
+	secureCookie := isRequestHTTPS(c)
+	emailOAuthClearCookie(c, emailOAuthStateCookieName, secureCookie)
+	emailOAuthClearCookie(c, emailOAuthRedirectCookie, secureCookie)
+	emailOAuthClearCookie(c, emailOAuthProviderCookie, secureCookie)
+	emailOAuthClearCookie(c, emailOAuthAffiliateCookie, secureCookie)
+	clearOAuthPromoCodeCookie(c, secureCookie)
 	cfg, cfgErr := h.getEmailOAuthConfig(c.Request.Context(), provider)
 	if cfgErr != nil {
 		response.ErrorFrom(c, cfgErr)
@@ -117,14 +124,6 @@ func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
-	defer func() {
-		emailOAuthClearCookie(c, emailOAuthStateCookieName, secureCookie)
-		emailOAuthClearCookie(c, emailOAuthRedirectCookie, secureCookie)
-		emailOAuthClearCookie(c, emailOAuthProviderCookie, secureCookie)
-		emailOAuthClearCookie(c, emailOAuthAffiliateCookie, secureCookie)
-		clearOAuthPromoCodeCookie(c, secureCookie)
-	}()
 	expectedState, err := readCookieDecoded(c, emailOAuthStateCookieName)
 	if err != nil || expectedState == "" || expectedState != state {
 		redirectOAuthError(c, frontendCallback, "invalid_state", "invalid oauth state", "")
@@ -174,12 +173,26 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		UpstreamMetadata: profile.Metadata,
 	}
 	affiliateCode := h.emailOAuthAffiliateCode(c)
-	if shouldCreate, err := h.emailOAuthShouldCreatePendingRegistration(c.Request.Context(), input); err != nil {
+	existingUser, err := h.authService.ResolveVerifiedEmailOAuthUser(c.Request.Context(), input)
+	if err != nil {
 		redirectOAuthError(c, frontendCallback, infraerrors.Reason(err), infraerrors.Message(err), "")
 		return
-	} else if shouldCreate {
+	}
+	if existingUser == nil {
 		if pendingErr := h.createEmailOAuthRegistrationPendingSession(c, provider, frontendCallback, redirectTo, profile); pendingErr != nil {
 			redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
+			return
+		}
+		redirectToFrontendCallback(c, frontendCallback)
+		return
+	}
+	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), existingUser); err != nil {
+		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
+		return
+	}
+	if existingUser.TotpEnabled && h.settingSvc.IsTotpEnabled(c.Request.Context()) {
+		if err := h.createEmailOAuthTotpPendingSession(c, provider, redirectTo, profile, existingUser); err != nil {
+			redirectOAuthError(c, frontendCallback, infraerrors.Reason(err), infraerrors.Message(err), "")
 			return
 		}
 		redirectToFrontendCallback(c, frontendCallback)
@@ -219,35 +232,6 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	redirectWithFragment(c, frontendCallback, fragment)
 }
 
-func (h *AuthHandler) emailOAuthShouldCreatePendingRegistration(ctx context.Context, input service.EmailOAuthIdentityInput) (bool, error) {
-	client := h.entClient()
-	if client == nil {
-		return false, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
-	}
-	identityUser, err := h.findOAuthIdentityUser(ctx, service.PendingAuthIdentityKey{
-		ProviderType:    strings.TrimSpace(input.ProviderType),
-		ProviderKey:     strings.TrimSpace(input.ProviderKey),
-		ProviderSubject: strings.TrimSpace(input.ProviderSubject),
-	})
-	if err != nil {
-		return false, err
-	}
-	email := strings.TrimSpace(strings.ToLower(input.Email))
-	if identityUser != nil {
-		if !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
-			return false, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
-		}
-		return false, nil
-	}
-	if _, err := findUserByNormalizedEmail(ctx, client, email); err != nil {
-		if errors.Is(err, service.ErrUserNotFound) {
-			return true, nil
-		}
-		return false, err
-	}
-	return false, nil
-}
-
 func (h *AuthHandler) emailOAuthAffiliateCode(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -256,6 +240,65 @@ func (h *AuthHandler) emailOAuthAffiliateCode(c *gin.Context) string {
 		return strings.TrimSpace(code)
 	}
 	return ""
+}
+
+func (h *AuthHandler) createEmailOAuthTotpPendingSession(c *gin.Context, provider, redirectTo string, profile *emailOAuthProfile, user *service.User) error {
+	if h.totpService == nil {
+		return infraerrors.ServiceUnavailable("TOTP_NOT_READY", "two-factor authentication is unavailable")
+	}
+	browserSessionKey, err := generateOAuthPendingBrowserSession()
+	if err != nil {
+		return infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
+	}
+	completion := map[string]any{
+		"step": "totp_required", "requires_2fa": true,
+		"provider": provider, "redirect": redirectTo,
+		"user_email_masked": service.MaskEmail(user.Email), "adoption_required": false,
+	}
+	session, err := h.createOAuthPendingSessionWithResult(c, oauthPendingSessionPayload{
+		Intent:       oauthIntentLogin,
+		Identity:     service.PendingAuthIdentityKey{ProviderType: provider, ProviderKey: provider, ProviderSubject: strings.TrimSpace(profile.Subject)},
+		TargetUserID: &user.ID, ResolvedEmail: user.Email, RedirectTo: redirectTo,
+		BrowserSessionKey: browserSessionKey, UpstreamIdentityClaims: emailOAuthProfileClaims(provider, profile),
+		CompletionResponse: completion,
+	})
+	if err != nil {
+		return err
+	}
+	tempToken, err := h.totpService.CreatePendingOAuthBindLoginSession(c.Request.Context(), user.ID, user.Email, session.SessionToken, browserSessionKey)
+	if err != nil {
+		clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
+		return infraerrors.InternalServer("TOTP_SESSION_CREATE_FAILED", "failed to create two-factor login session").WithCause(err)
+	}
+	completion["temp_token"] = tempToken
+	session.LocalFlowState[oauthCompletionResponseKey] = completion
+	if err := h.entClient().PendingAuthSession.UpdateOneID(session.ID).SetLocalFlowState(session.LocalFlowState).Exec(c.Request.Context()); err != nil {
+		_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+		clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
+		return infraerrors.InternalServer("TOTP_SESSION_CREATE_FAILED", "failed to save two-factor login session").WithCause(err)
+	}
+	setOAuthPendingBrowserCookie(c, browserSessionKey, isRequestHTTPS(c))
+	return nil
+}
+
+func emailOAuthProfileClaims(provider string, profile *emailOAuthProfile) map[string]any {
+	claims := map[string]any{
+		"email": strings.TrimSpace(strings.ToLower(profile.Email)), "email_verified": profile.EmailVerified,
+		"username": strings.TrimSpace(profile.Username), "provider": provider, "provider_key": provider,
+		"provider_subject": strings.TrimSpace(profile.Subject),
+	}
+	if strings.TrimSpace(profile.DisplayName) != "" {
+		claims["suggested_display_name"] = strings.TrimSpace(profile.DisplayName)
+	}
+	if strings.TrimSpace(profile.AvatarURL) != "" {
+		claims["suggested_avatar_url"] = strings.TrimSpace(profile.AvatarURL)
+	}
+	for key, value := range profile.Metadata {
+		if _, exists := claims[key]; !exists {
+			claims[key] = value
+		}
+	}
+	return claims
 }
 
 func (h *AuthHandler) createEmailOAuthRegistrationPendingSession(
@@ -268,6 +311,9 @@ func (h *AuthHandler) createEmailOAuthRegistrationPendingSession(
 	if h == nil || profile == nil {
 		return infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
 	}
+	if h.settingSvc == nil || !h.settingSvc.IsRegistrationEnabled(c.Request.Context()) {
+		return service.ErrRegDisabled
+	}
 	browserSessionKey, err := generateOAuthPendingBrowserSession()
 	if err != nil {
 		return infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
@@ -275,29 +321,10 @@ func (h *AuthHandler) createEmailOAuthRegistrationPendingSession(
 	setOAuthPendingBrowserCookie(c, browserSessionKey, isRequestHTTPS(c))
 
 	email := strings.TrimSpace(strings.ToLower(profile.Email))
-	username := strings.TrimSpace(profile.Username)
 	affiliateCode := h.emailOAuthAffiliateCode(c)
-	upstreamClaims := map[string]any{
-		"email":            email,
-		"email_verified":   profile.EmailVerified,
-		"username":         username,
-		"provider":         provider,
-		"provider_key":     provider,
-		"provider_subject": strings.TrimSpace(profile.Subject),
-	}
-	if strings.TrimSpace(profile.DisplayName) != "" {
-		upstreamClaims["suggested_display_name"] = strings.TrimSpace(profile.DisplayName)
-	}
-	if strings.TrimSpace(profile.AvatarURL) != "" {
-		upstreamClaims["suggested_avatar_url"] = strings.TrimSpace(profile.AvatarURL)
-	}
+	upstreamClaims := emailOAuthProfileClaims(provider, profile)
 	if affiliateCode != "" {
 		upstreamClaims["aff_code"] = affiliateCode
-	}
-	for key, value := range profile.Metadata {
-		if _, exists := upstreamClaims[key]; !exists {
-			upstreamClaims[key] = value
-		}
 	}
 
 	invitationRequired := h != nil && h.settingSvc != nil && h.settingSvc.IsInvitationCodeEnabled(c.Request.Context())

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useTableLoader } from '@/composables/useTableLoader'
+import { onUnmounted } from 'vue'
 
 // Mock @vueuse/core 的 useDebounceFn
 vi.mock('@vueuse/core', () => ({
@@ -192,6 +193,53 @@ describe('useTableLoader', () => {
   // --- 请求取消 ---
 
   describe('请求取消', () => {
+    it('does not update rows after unmount even when fetch ignores cancellation', async () => {
+      let resolve!: (value: any) => void
+      const { load, items } = useTableLoader({ fetchFn: vi.fn(() => new Promise(done => { resolve = done })) })
+      const pending = load()
+      vi.mocked(onUnmounted).mock.calls.at(-1)![0]()
+      resolve({ items: [{ id: 1 }], total: 1, pages: 1 })
+      await pending
+      expect(items.value).toEqual([])
+    })
+
+    it('does not start a debounced request after unmount', async () => {
+      const fetchFn = createMockFetchFn()
+      const { debouncedReload } = useTableLoader({ fetchFn })
+      debouncedReload()
+      vi.mocked(onUnmounted).mock.calls.at(-1)![0]()
+      await vi.runAllTimersAsync()
+      expect(fetchFn).not.toHaveBeenCalled()
+    })
+
+    it('keeps the newest results when a cancelled fetch ignores the abort signal', async () => {
+      let resolveFirst!: (value: any) => void
+      const fetchFn = vi.fn()
+        .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+        .mockResolvedValueOnce({ items: [{ id: 2 }], total: 1, pages: 1 })
+      const { load, items, pagination } = useTableLoader({ fetchFn })
+      const first = load()
+      await load()
+      resolveFirst({ items: [{ id: 1 }], total: 50, pages: 5 })
+      await first
+      expect(items.value).toEqual([{ id: 2 }])
+      expect(pagination.total).toBe(1)
+      expect(pagination.pages).toBe(1)
+    })
+
+    it('ignores a failure belonging to a replaced request', async () => {
+      let rejectFirst!: (error: Error) => void
+      const fetchFn = vi.fn()
+        .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject }))
+        .mockResolvedValueOnce({ items: [{ id: 2 }], total: 1, pages: 1 })
+      const { load, items } = useTableLoader({ fetchFn })
+      const first = load()
+      await load()
+      rejectFirst(new Error('Old request failed'))
+      await expect(first).resolves.toBeUndefined()
+      expect(items.value).toEqual([{ id: 2 }])
+    })
+
     it('新请求取消前一个未完成的请求', async () => {
       let callCount = 0
       const fetchFn = vi.fn((_page, _size, _params, options) => {

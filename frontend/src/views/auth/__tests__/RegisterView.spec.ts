@@ -109,6 +109,50 @@ describe('RegisterView', () => {
     registerMock.mockResolvedValue({})
   })
 
+  it('allows the backend to report a missing Turnstile configuration', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_site_key: '' })
+    registerMock.mockRejectedValueOnce({ message: 'Captcha is not configured' })
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('#confirmPassword').setValue('secret-123')
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(registerMock).toHaveBeenCalledOnce()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Captcha is not configured')
+  })
+
+  it('rejects passwords exceeding the UTF-8 limit before captcha or email verification', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false, email_verify_enabled: true })
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('\u4e2d'.repeat(25))
+    await wrapper.get('#confirmPassword').setValue('\u4e2d'.repeat(25))
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(showErrorMock).toHaveBeenCalledWith('auth.passwordTooLong')
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('register_data')).toBeNull()
+  })
+
+  it('blocks submissions until settings have loaded', async () => {
+    getPublicSettingsMock.mockReturnValueOnce(new Promise(() => {}))
+    const wrapper = mountRegister()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('#confirmPassword').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('register_data')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('does not flash the promo-code field before disabled settings finish loading', async () => {
     let resolveSettings!: (settings: typeof publicSettings) => void
     getPublicSettingsMock.mockReturnValueOnce(

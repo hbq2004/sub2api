@@ -683,12 +683,14 @@ func TestConstants_值正确(t *testing.T) {
 	if ClientID != "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com" {
 		t.Errorf("ClientID 不匹配: got %s", ClientID)
 	}
+	oldSecret := defaultClientSecret
+	defaultClientSecret = ""
+	t.Cleanup(func() { defaultClientSecret = oldSecret })
+	t.Setenv(AntigravityOAuthClientSecretEnv, "synthetic-client-secret")
+	defaultClientSecret = os.Getenv(AntigravityOAuthClientSecretEnv)
 	secret, err := getClientSecret()
-	if err != nil {
-		t.Fatalf("getClientSecret 应返回默认值，但报错: %v", err)
-	}
-	if secret != "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" {
-		t.Errorf("默认 client_secret 不匹配: got %s", secret)
+	if err != nil || secret != "synthetic-client-secret" {
+		t.Fatal("configured synthetic OAuth client secret was not selected")
 	}
 	if RedirectURI != "http://localhost:8085/callback" {
 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)

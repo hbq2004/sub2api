@@ -119,6 +119,8 @@ func TestExportDataIncludesSecrets(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/data", nil)
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+	require.Equal(t, "no-cache", rec.Header().Get("Pragma"))
 
 	var resp dataResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))

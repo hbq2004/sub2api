@@ -36,9 +36,6 @@
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button @click="handleExportCodes" class="btn btn-secondary">
-              {{ t('admin.redeem.exportCsv') }}
-            </button>
             <button
               data-test="batch-update-open"
               @click="openBatchUpdateDialog"
@@ -90,26 +87,6 @@
           <template #cell-code="{ value }">
             <div class="flex items-center space-x-2">
               <code class="font-mono text-sm text-gray-900 dark:text-gray-100">{{ value }}</code>
-              <button
-                @click="copyToClipboard(value)"
-                :class="[
-                  'flex items-center transition-colors',
-                  copiedCode === value
-                    ? 'text-green-500'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-                ]"
-                :title="copiedCode === value ? t('admin.redeem.copied') : t('keys.copyToClipboard')"
-              >
-                <Icon v-if="copiedCode !== value" name="copy" size="sm" :stroke-width="2" />
-                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </button>
             </div>
           </template>
 
@@ -557,6 +534,9 @@
                 <p class="text-sm text-gray-500 dark:text-gray-400">
                   {{ t('admin.redeem.codesCreated', { count: generatedCodes.length }) }}
                 </p>
+                <p class="text-xs text-amber-700 dark:text-amber-300">
+                  {{ t('admin.redeem.oneTimeCodeNotice') }}
+                </p>
               </div>
             </div>
             <button
@@ -798,7 +778,6 @@ const showDeleteDialog = ref(false)
 const showDeleteUnusedDialog = ref(false)
 const showBatchUpdateDialog = ref(false)
 const deletingCode = ref<RedeemCode | null>(null)
-const copiedCode = ref<string | null>(null)
 
 const {
   selectedSet: selectedCodeIds,
@@ -1062,37 +1041,6 @@ const handleGenerateCodes = async () => {
     console.error('Error generating codes:', error)
   } finally {
     generating.value = false
-  }
-}
-
-const copyToClipboard = async (text: string) => {
-  const success = await clipboardCopy(text, t('admin.redeem.copied'))
-  if (success) {
-    copiedCode.value = text
-    setTimeout(() => {
-      copiedCode.value = null
-    }, 2000)
-  }
-}
-
-const handleExportCodes = async () => {
-  try {
-    const blob = await adminAPI.redeem.exportCodes(buildRedeemQueryFilters())
-
-    // Create download link
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `redeem-codes-${new Date().toISOString().split('T')[0]}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-
-    appStore.showSuccess(t('admin.redeem.codesExported'))
-  } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.redeem.failedToExport'))
-    console.error('Error exporting codes:', error)
   }
 }
 

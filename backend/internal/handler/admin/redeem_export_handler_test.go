@@ -25,14 +25,8 @@ func TestRedeemExportPassesSearchAndSort(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes/export?type=balance&status=unused&search=ABC&sort_by=value&sort_order=asc", nil)
 	router.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	require.Equal(t, 1, adminSvc.lastListRedeemCodes.calls)
-	require.Equal(t, "balance", adminSvc.lastListRedeemCodes.codeType)
-	require.Equal(t, "unused", adminSvc.lastListRedeemCodes.status)
-	require.Equal(t, "ABC", adminSvc.lastListRedeemCodes.search)
-	require.Equal(t, "value", adminSvc.lastListRedeemCodes.sortBy)
-	require.Equal(t, "asc", adminSvc.lastListRedeemCodes.sortOrder)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, 0, adminSvc.lastListRedeemCodes.calls)
 }
 
 func TestRedeemExportSortDefaults(t *testing.T) {
@@ -41,9 +35,6 @@ func TestRedeemExportSortDefaults(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes/export", nil)
 	router.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	require.Equal(t, 1, adminSvc.lastListRedeemCodes.calls)
-	require.Equal(t, "id", adminSvc.lastListRedeemCodes.sortBy)
-	require.Equal(t, "desc", adminSvc.lastListRedeemCodes.sortOrder)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, 0, adminSvc.lastListRedeemCodes.calls)
 }

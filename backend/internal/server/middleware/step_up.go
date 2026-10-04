@@ -24,7 +24,22 @@ type stepUpUserReader interface {
 
 // stepUpSettingReader 抽象 step-up 功能开关读取能力（由 SettingService 实现）。
 type stepUpSettingReader interface {
-	IsStepUpEnabled(ctx context.Context) bool
+	IsStepUpEnabledStrict(ctx context.Context) (bool, error)
+}
+
+const requiredStepUpContextKey = "required_step_up"
+
+// RequireStepUp applies the gate even when the optional export gate is disabled.
+// Only trusted route registration sets this context flag; request input cannot.
+func RequireStepUp(auth StepUpAuthMiddleware) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(requiredStepUpContextKey, true)
+		if auth == nil {
+			AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+			return
+		}
+		gin.HandlerFunc(auth)(c)
+	}
 }
 
 // StepUpSessionKey 计算 step-up 授权的会话键：
@@ -95,10 +110,18 @@ func EnforceStepUpAlways(
 }
 
 func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
-	// 功能开关关闭时直接放行（含 admin API key），恢复门控引入前的行为。
-	// settings 为 nil 时保持门控（fail-closed）：正常装配不会出现 nil。
-	if settings != nil && !settings.IsStepUpEnabled(c.Request.Context()) {
-		return true
+	// 功能开关明确关闭时直接放行（含 admin API key），恢复门控引入前的行为。
+	// 真实 SettingService 使用错误感知读取：设置缺失、非法或存储故障均拒绝
+	// 操作，避免把一次局部读取失败解释成“关闭”。
+	if settings != nil && !c.GetBool(requiredStepUpContextKey) {
+		enabled, err := settings.IsStepUpEnabledStrict(c.Request.Context())
+		if err != nil {
+			AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+			return false
+		}
+		if !enabled {
+			return true
+		}
 	}
 
 	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
@@ -113,12 +136,16 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 		return false
 	}
 
+	if userReader == nil || grantChecker == nil {
+		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+		return false
+	}
 	user, err := userReader.GetByID(c.Request.Context(), subject.UserID)
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "Failed to load user")
 		return false
 	}
-	if !user.TotpEnabled {
+	if user == nil || !user.TotpEnabled {
 		AbortWithError(c, 403, "STEP_UP_TOTP_NOT_ENABLED",
 			"This operation requires two-factor authentication; please enable TOTP first")
 		return false

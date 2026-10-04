@@ -19,8 +19,8 @@ const (
 	AdminComplianceDocumentPathEN = "docs/legal/admin-compliance.en.md"
 	AdminComplianceDocumentURLZH  = "https://github.com/Wei-Shaw/sub2api/blob/main/docs/legal/admin-compliance.zh.md"
 	AdminComplianceDocumentURLEN  = "https://github.com/Wei-Shaw/sub2api/blob/main/docs/legal/admin-compliance.en.md"
-	AdminComplianceAckPhraseZH    = "我已阅读、理解并同意 Sub2API 部署与运营合规承诺"
-	AdminComplianceAckPhraseEN    = "I have read, understood, and agree to the Sub2API Deployment and Operation Compliance Commitment"
+	AdminComplianceAckPhraseZH    = "我已阅读、理解并同意 智驿 AI 部署与运营合规承诺"
+	AdminComplianceAckPhraseEN    = "I have read, understood, and agree to the 智驿 AI Deployment and Operation Compliance Commitment"
 
 	settingKeyAdminComplianceAcknowledgement = "admin_compliance_acknowledgement"
 )
@@ -82,6 +82,14 @@ func expectedAdminCompliancePhrase(language string) string {
 	return AdminComplianceAckPhraseEN
 }
 
+func (s *SettingService) adminCompliancePhrase(ctx context.Context, language string) string {
+	phrase := expectedAdminCompliancePhrase(language)
+	if s == nil || s.settingRepo == nil {
+		return phrase
+	}
+	return strings.ReplaceAll(phrase, defaultSiteName, s.GetSiteName(ctx))
+}
+
 func adminComplianceAcknowledgementKey(adminUserID int64) string {
 	if adminUserID <= 0 {
 		return settingKeyAdminComplianceAcknowledgement
@@ -97,8 +105,8 @@ func (s *SettingService) GetAdminComplianceStatus(ctx context.Context, adminUser
 		DocumentPathEN: AdminComplianceDocumentPathEN,
 		DocumentURLZH:  AdminComplianceDocumentURLZH,
 		DocumentURLEN:  AdminComplianceDocumentURLEN,
-		AckPhraseZH:    AdminComplianceAckPhraseZH,
-		AckPhraseEN:    AdminComplianceAckPhraseEN,
+		AckPhraseZH:    s.adminCompliancePhrase(ctx, "zh"),
+		AckPhraseEN:    s.adminCompliancePhrase(ctx, "en"),
 	}
 	if s == nil || s.settingRepo == nil {
 		return status, nil
@@ -136,7 +144,7 @@ func (s *SettingService) AcceptAdminCompliance(ctx context.Context, input AdminC
 		return nil, infraerrors.InternalServer("SETTING_SERVICE_UNAVAILABLE", "setting service is unavailable")
 	}
 	phrase := strings.TrimSpace(input.Phrase)
-	if phrase != expectedAdminCompliancePhrase(input.Language) {
+	if phrase != s.adminCompliancePhrase(ctx, input.Language) {
 		return nil, ErrAdminComplianceInvalidPhrase
 	}
 

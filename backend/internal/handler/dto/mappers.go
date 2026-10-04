@@ -625,6 +625,7 @@ func RedeemCodeFromService(rc *service.RedeemCode) *RedeemCode {
 		return nil
 	}
 	out := redeemCodeFromServiceBase(rc)
+	out.Code = maskRedeemCode(out.Code)
 	return &out
 }
 
@@ -634,10 +635,35 @@ func RedeemCodeFromServiceAdmin(rc *service.RedeemCode) *AdminRedeemCode {
 	if rc == nil {
 		return nil
 	}
+	out := AdminRedeemCode{
+		RedeemCode: redeemCodeFromServiceBase(rc),
+		Notes:      rc.Notes,
+	}
+	out.Code = maskRedeemCode(out.Code)
+	return &out
+}
+
+// RedeemCodeFromServiceAdminGenerated is the only admin mapping that returns
+// the plaintext code. It is used for the immediate response to code creation;
+// subsequent list/detail/history responses are masked.
+func RedeemCodeFromServiceAdminGenerated(rc *service.RedeemCode) *AdminRedeemCode {
+	if rc == nil {
+		return nil
+	}
 	return &AdminRedeemCode{
 		RedeemCode: redeemCodeFromServiceBase(rc),
 		Notes:      rc.Notes,
 	}
+}
+
+func maskRedeemCode(code string) string {
+	if code == "" {
+		return ""
+	}
+	if len(code) <= 8 {
+		return "********"
+	}
+	return code[:4] + "..." + code[len(code)-4:]
 }
 
 func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {

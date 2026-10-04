@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import OAuthCallbackView from '@/views/auth/OAuthCallbackView.vue'
 
@@ -9,6 +9,7 @@ const {
   showErrorMock,
   showSuccessMock,
   setTokenMock,
+  login2FAMock,
   copyToClipboardMock,
   exchangePendingOAuthCompletionMock,
   apiPostMock,
@@ -27,6 +28,7 @@ const {
   showErrorMock: vi.fn(),
   showSuccessMock: vi.fn(),
   setTokenMock: vi.fn(),
+  login2FAMock: vi.fn(),
   copyToClipboardMock: vi.fn(),
   exchangePendingOAuthCompletionMock: vi.fn(),
   apiPostMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock('vue-i18n', () => ({
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
     setToken: (...args: any[]) => setTokenMock(...args),
+    login2FA: (...args: any[]) => login2FAMock(...args),
   }),
   useAppStore: () => ({
     showError: (...args: any[]) => showErrorMock(...args),
@@ -92,10 +95,93 @@ describe('OAuthCallbackView', () => {
     showErrorMock.mockReset()
     showSuccessMock.mockReset()
     setTokenMock.mockReset()
+    login2FAMock.mockReset()
     copyToClipboardMock.mockReset()
     exchangePendingOAuthCompletionMock.mockReset()
     apiPostMock.mockReset()
     window.sessionStorage.clear()
+  })
+
+  it.each(['fragment', 'query'])('shows a retry action after an OAuth %s error without exchanging a pending session', async (source) => {
+    routeState.path = '/auth/oauth/callback'
+    if (source === 'fragment') {
+      locationState.current.hash = '#error=provider_error&error_description=Access+denied'
+    } else {
+      routeState.query = { error: 'access_denied', error_description: 'Access denied' }
+    }
+    window.sessionStorage.setItem('email_oauth_pending_provider', 'github')
+    const wrapper = mount(OAuthCallbackView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Access denied')
+    expect(wrapper.find('input[readonly]').exists()).toBe(false)
+    expect(exchangePendingOAuthCompletionMock).not.toHaveBeenCalled()
+    expect(window.sessionStorage.getItem('email_oauth_pending_provider')).toBeNull()
+    await wrapper.get('button').trigger('click')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/login')
+  })
+
+  it('shows an error view when a pending completion reports an unsupported result', async () => {
+    routeState.path = '/auth/oauth/callback'
+    exchangePendingOAuthCompletionMock.mockResolvedValue({ error: 'registration_disabled' })
+    const wrapper = mount(OAuthCallbackView)
+    await flushPromises()
+
+    expect(wrapper.find('input[readonly]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('registration_disabled')
+    expect(wrapper.text()).toContain('auth.backToLogin')
+  })
+
+  it('keeps token-load failures out of the manual authorization-code view', async () => {
+    routeState.path = '/auth/oauth/callback'
+    locationState.current.hash = '#access_token=test-token&redirect=%2Fkeys'
+    setTokenMock.mockRejectedValue(new Error('Session expired'))
+    const wrapper = mount(OAuthCallbackView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Session expired')
+    expect(wrapper.find('input[readonly]').exists()).toBe(false)
+    expect(routerReplaceMock).not.toHaveBeenCalled()
+  })
+
+  it('decodes tokens and the requested route once and removes the callback fragment', async () => {
+    routeState.path = '/auth/oauth/callback'
+    const destination = '/keys?filter=a%2Fb&label=two words#details'
+    locationState.current.hash = '#' + new URLSearchParams({
+      access_token: 'test-token+/%=value', redirect: destination
+    }).toString()
+    const previousHistoryState = window.history.state
+    const historySpy = vi.spyOn(window.history, 'replaceState')
+    try {
+      mount(OAuthCallbackView)
+      await flushPromises()
+
+      expect(setTokenMock).toHaveBeenCalledWith('test-token+/%=value')
+      expect(routerReplaceMock).toHaveBeenCalledWith(destination)
+      expect(historySpy).toHaveBeenCalledWith(previousHistoryState, '', '/auth/callback')
+    } finally {
+      historySpy.mockRestore()
+    }
+  })
+
+  it('waits for TOTP before completing GitHub sign-in and preserves the requested route', async () => {
+    routeState.path = '/auth/oauth/callback'
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      requires_2fa: true, temp_token: 'test-challenge', user_email_masked: 'o***r@example.com', redirect: '/keys'
+    })
+    login2FAMock.mockResolvedValue({})
+    const wrapper = mount(OAuthCallbackView, { global: { stubs: { TotpLoginModal: true } } })
+    await flushPromises()
+
+    const modal = wrapper.findComponent({ name: 'TotpLoginModal' })
+    expect(modal.exists()).toBe(true)
+    expect(modal.props('tempToken')).toBe('test-challenge')
+    expect(setTokenMock).not.toHaveBeenCalled()
+    expect(routerReplaceMock).not.toHaveBeenCalled()
+    modal.vm.$emit('verify', '123456')
+    await flushPromises()
+    expect(login2FAMock).toHaveBeenCalledWith('test-challenge', '123456')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/keys')
   })
 
   it('renders localized callback copy actions', () => {
@@ -133,8 +219,9 @@ describe('OAuthCallbackView', () => {
     await vi.dynamicImportSettled()
 
     expect(exchangePendingOAuthCompletionMock).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('auth.oauth.invalidCallbackTitle')
-    expect(wrapper.text()).toContain('auth.oauth.invalidCallbackHint')
+    expect(wrapper.text()).toContain('auth.emailOAuth.callbackFailed')
+    expect(wrapper.text()).toContain('pending session not found')
+    expect(wrapper.text()).toContain('auth.backToLogin')
     expect(wrapper.find('input[readonly]').exists()).toBe(false)
   })
 

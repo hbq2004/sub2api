@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/credentialcrypto"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
@@ -223,6 +225,7 @@ type schedulerCache struct {
 	rdb            *redis.Client
 	mgetChunkSize  int
 	writeChunkSize int
+	protector      *credentialcrypto.Protector
 }
 
 func NewSchedulerCache(rdb *redis.Client) service.SchedulerCache {
@@ -296,9 +299,15 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 		if val == nil {
 			return nil, false, nil
 		}
-		account, err := decodeCachedAccount(val)
+		account, err := c.decodeAccount(val)
+		if errors.Is(err, credentialcrypto.ErrLegacy) {
+			return nil, false, nil
+		}
 		if err != nil {
 			return nil, false, err
+		}
+		if strconv.FormatInt(account.ID, 10) != ids[i] {
+			return nil, false, credentialcrypto.ErrProtection
 		}
 		if err := applySchedulerLastUsed(account, lastUsedValues[i]); err != nil {
 			return nil, false, err
@@ -575,9 +584,15 @@ func (c *schedulerCache) GetAccount(ctx context.Context, accountID int64) (*serv
 	if len(values) != 2 || values[0] == nil {
 		return nil, nil
 	}
-	account, err := decodeCachedAccount(values[0])
+	account, err := c.decodeAccount(values[0])
+	if errors.Is(err, credentialcrypto.ErrLegacy) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
+	}
+	if account.ID != accountID {
+		return nil, credentialcrypto.ErrProtection
 	}
 	if err := applySchedulerLastUsed(account, values[1]); err != nil {
 		return nil, err
@@ -797,8 +812,11 @@ func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service
 	}
 
 	for _, account := range accounts {
-		fullPayload, metaPayload, err := marshalSchedulerCacheAccount(account)
+		fullPayload, metaPayload, err := c.marshalAccount(account)
 		if err != nil {
+			if c.protector != nil {
+				return nil, err
+			}
 			slog.Warn("scheduler cache skips account with unencodable payload",
 				"account_id", account.ID,
 				"error", err,
@@ -836,6 +854,46 @@ func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, erro
 		return nil, nil, fmt.Errorf("marshal account metadata: %w", err)
 	}
 	return fullPayload, metaPayload, nil
+}
+
+func (c *schedulerCache) marshalAccount(account service.Account) ([]byte, []byte, error) {
+	if c.protector == nil {
+		return marshalSchedulerCacheAccount(account)
+	}
+	metadata := buildSchedulerMetadataAccount(account)
+	var err error
+	account.Credentials, err = c.protector.Encrypt(account.ID, account.Credentials)
+	if err != nil {
+		return nil, nil, err
+	}
+	metadata.Credentials, err = c.protector.Encrypt(metadata.ID, metadata.Credentials)
+	if err != nil {
+		return nil, nil, err
+	}
+	full, err := json.Marshal(account)
+	if err != nil {
+		return nil, nil, credentialcrypto.ErrProtection
+	}
+	meta, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, nil, credentialcrypto.ErrProtection
+	}
+	return full, meta, nil
+}
+
+func (c *schedulerCache) decodeAccount(value any) (*service.Account, error) {
+	account, err := decodeCachedAccount(value)
+	if err != nil {
+		return nil, credentialcrypto.ErrProtection
+	}
+	if c.protector != nil && !credentialcrypto.IsProtected(account.Credentials) {
+		return nil, credentialcrypto.ErrLegacy
+	}
+	account.Credentials, err = c.protector.Decrypt(account.ID, account.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	return account, nil
 }
 
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {
@@ -1034,6 +1092,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"auto_pause_7d_threshold",
 		"auto_pause_5h_disabled",
 		"auto_pause_7d_disabled",
+		// 自动用卡：卡可用的 OpenAI 号在暂停阈值与用卡阈值之间继续调度。
+		// 候选过滤读的是本投影，缺这几个键时放行分支永远不会生效，
+		// 账号会在暂停阈值处被一刀切停调，直到窗口自然重置。
+		service.OpenAIAutoResetCreditEnabledExtraKey,
+		service.OpenAIAutoResetCredit5hThresholdExtraKey,
+		service.OpenAIAutoResetCredit7dThresholdExtraKey,
+		service.OpenAIAutoResetCreditStateExtraKey,
 		"model_rate_limits",
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,

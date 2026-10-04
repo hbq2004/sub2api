@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,7 +77,10 @@ func TestRedeemReductionPreservesRenewal(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, renewed.AddDate(0, 0, -1).Equal(got.ExpiresAt))
 	require.Contains(t, got.Notes, "renewal")
-	require.Contains(t, got.Notes, codes[0])
+	code, err := NewRedeemCodeRepository(testEntClient(t)).GetByCode(context.Background(), codes[0])
+	require.NoError(t, err)
+	require.Contains(t, got.Notes, fmt.Sprintf("#%d", code.ID))
+	require.NotContains(t, got.Notes, codes[0])
 	require.EqualValues(t, 1, repo.lockReads.Load())
 }
 func TestRedeemConcurrentReductionsBothApply(t *testing.T) {
@@ -116,7 +120,10 @@ func TestRedeemConcurrentReductionsBothApply(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, sub.ExpiresAt.AddDate(0, 0, -2).Equal(got.ExpiresAt))
 	for _, code := range codes {
-		require.Contains(t, got.Notes, code)
+		record, err := NewRedeemCodeRepository(testEntClient(t)).GetByCode(ctx, code)
+		require.NoError(t, err)
+		require.Contains(t, got.Notes, fmt.Sprintf("#%d", record.ID))
+		require.NotContains(t, got.Notes, code)
 	}
 	require.EqualValues(t, 2, repo.lockReads.Load())
 }

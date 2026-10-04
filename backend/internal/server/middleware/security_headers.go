@@ -119,6 +119,9 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 
 	return func(c *gin.Context) {
 		finalPolicy := policy
+		if c.Request.Host == "127.0.0.1:8080" || c.Request.Host == "localhost:8080" {
+			finalPolicy = addToDirective(finalPolicy, "connect-src", "http://127.0.0.1:8769")
+		}
 		if getFrameSrcOrigins != nil {
 			for _, origin := range getFrameSrcOrigins() {
 				if origin != "" {

@@ -3,6 +3,8 @@
 package repository
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"testing"
 
@@ -71,7 +73,11 @@ func TestRedeemLockKey(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := redeemLockKey(tc.code)
-			require.Equal(t, tc.expected, got)
+			digest := sha256.Sum256([]byte(tc.code))
+			require.Equal(t, redeemLockKeyPrefix+hex.EncodeToString(digest[:]), got)
+			if tc.code != "" {
+				require.NotContains(t, got, tc.code)
+			}
 		})
 	}
 }
