@@ -21,12 +21,19 @@ func executeUserIdempotentJSON(
 	ttl time.Duration,
 	execute func(context.Context) (any, error),
 ) {
+	executeUserIdempotentJSONWithResponse(c, scope, payload, ttl, execute, nil)
+}
+
+func executeUserIdempotentJSONWithResponse(c *gin.Context, scope string, payload any, ttl time.Duration, execute func(context.Context) (any, error), ephemeral func(any) any) {
 	coordinator := service.DefaultIdempotencyCoordinator()
 	if coordinator == nil {
 		data, err := execute(c.Request.Context())
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
+		}
+		if ephemeral != nil {
+			data = ephemeral(data)
 		}
 		response.Success(c, data)
 		return
@@ -61,5 +68,9 @@ func executeUserIdempotentJSON(
 	if result != nil && result.Replayed {
 		c.Header("X-Idempotency-Replayed", "true")
 	}
-	response.Success(c, result.Data)
+	data := result.Data
+	if ephemeral != nil && !result.Replayed {
+		data = ephemeral(data)
+	}
+	response.Success(c, data)
 }

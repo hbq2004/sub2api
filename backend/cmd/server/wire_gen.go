@@ -68,7 +68,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	promoCodeRepository := repository.NewPromoCodeRepository(client)
 	billingCache := repository.NewBillingCache(redisClient)
 	userSubscriptionRepository := repository.NewUserSubscriptionRepository(client)
-	apiKeyRepository := repository.NewAPIKeyRepository(client, db)
+	protector, err := repository.ProvideAccountCredentialProtector(configConfig)
+	if err != nil {
+		return nil, err
+	}
+	apiKeyRepository, err := repository.ProvideProtectedAPIKeyRepository(client, db, protector)
+	if err != nil {
+		return nil, err
+	}
 	userRPMCache := repository.NewUserRPMCache(redisClient)
 	userGroupRateRepository := repository.NewUserGroupRateRepository(db)
 	userPlatformQuotaRepository := repository.NewUserPlatformQuotaRepository(client)
@@ -76,12 +83,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	billingCacheService := service.ProvideBillingCacheService(billingCache, userRepository, userSubscriptionRepository, apiKeyRepository, userRPMCache, userGroupRateRepository, configConfig, serviceUserPlatformQuotaRepository)
 	apiKeyCache := repository.NewAPIKeyCache(redisClient)
 	concurrencyCache := repository.ProvideConcurrencyCache(redisClient, configConfig)
-	accountCredentialProtector, err := repository.ProvideAccountCredentialProtector(configConfig)
-	if err != nil {
-		return nil, err
-	}
-	schedulerCache := repository.ProvideProtectedSchedulerCache(redisClient, configConfig, accountCredentialProtector)
-	accountRepository, err := repository.ProvideAccountRepository(client, db, schedulerCache, accountCredentialProtector)
+	schedulerCache := repository.ProvideProtectedSchedulerCache(redisClient, configConfig, protector)
+	accountRepository, err := repository.ProvideAccountRepository(client, db, schedulerCache, protector)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +128,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	tempUnschedCache := repository.NewTempUnschedCache(redisClient)
 	timeoutCounterCache := repository.NewTimeoutCounterCache(redisClient)
 	openAI403CounterCache := repository.NewOpenAI403CounterCache(redisClient)
-	geminiTokenCache := repository.ProvideProtectedGeminiTokenCache(redisClient, accountCredentialProtector)
+	geminiTokenCache := repository.ProvideProtectedGeminiTokenCache(redisClient, protector)
 	compositeTokenCacheInvalidator := service.NewCompositeTokenCacheInvalidator(geminiTokenCache)
 	httpUpstream := repository.NewHTTPUpstream(configConfig)
 	leaderLockCache := repository.NewLeaderLockCache(redisClient)
@@ -198,7 +201,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	dashboardAggregationService := service.ProvideDashboardAggregationService(dashboardAggregationRepository, timingWheelService, leaderLockCache, db, configConfig, settingRepository)
 	dashboardHandler := admin.NewDashboardHandler(dashboardService, dashboardAggregationService)
 	adminGroupRepository := repository.NewAdminGroupRepository(client, db)
-	adminAccountRepository := repository.ProvideAdminAccountRepository(client, db, schedulerCache, accountCredentialProtector)
+	adminAccountRepository := repository.ProvideAdminAccountRepository(client, db, schedulerCache, protector)
 	proxyExitInfoProber := repository.NewProxyExitInfoProber(configConfig)
 	proxyLatencyCache := repository.NewProxyLatencyCache(redisClient)
 	adminService := service.NewAdminService(configConfig, userRepository, adminGroupRepository, adminAccountRepository, proxyRepository, apiKeyRepository, redeemCodeRepository, userGroupRateRepository, userRPMCache, billingCacheService, proxyExitInfoProber, proxyLatencyCache, apiKeyAuthCacheInvalidator, client, settingService, subscriptionService, userSubscriptionRepository, privacyClientFactory, openAIGatewayService, affiliateService, compositeModelRouteRepository, compositeRouteResolver, channelService)

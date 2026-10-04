@@ -3,6 +3,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertReleaseProvenance } from './release-provenance.mjs'
 
 const deploy = dirname(fileURLToPath(import.meta.url))
 const receipt = JSON.parse(readFileSync(join(deploy, '.local-release.json'), 'utf8'))
@@ -11,6 +12,9 @@ const docker = join(process.env.LOCALAPPDATA, 'Programs/DockerDesktop/resources/
 const tested = JSON.parse(readFileSync(receipt.reportPath, 'utf8'))
 assert.ok(tested.passed && tested.imageID === receipt.imageID, 'The local acceptance report differs from this release')
 assert.match(tested.sourceRevision || '', /^[0-9a-f]{40}$/, 'The local acceptance report lacks the source revision')
+const imageMetadata = JSON.parse(execFileSync(docker, ['image', 'inspect', receipt.imageID],
+  { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }))[0]
+assertReleaseProvenance(imageMetadata.Config.Labels || {}, tested.sourceRevision)
 const localImage = execFileSync(docker, ['inspect', 'sub2api', '--format', '{{.Image}}'], { encoding: 'utf8', windowsHide: true }).trim()
 assert.equal(localImage, receipt.imageID, 'Install and test this image locally before cloud promotion')
 const localHealth = await fetch('http://127.0.0.1:8080/health', { signal: AbortSignal.timeout(5000) })

@@ -157,7 +157,13 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
+export async function reveal(id: number): Promise<string> {
+  const { data } = await apiClient.post<{ key: string }>(`/keys/${id}/reveal`)
+  return data.key
+}
+
 export const keysAPI = {
+  reveal,
   list,
   getById,
   create,

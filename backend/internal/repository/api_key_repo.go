@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/credentialcrypto"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
@@ -25,8 +26,9 @@ import (
 )
 
 type apiKeyRepository struct {
-	client *dbent.Client
-	sql    sqlExecutor
+	client    *dbent.Client
+	sql       sqlExecutor
+	protector *credentialcrypto.Protector
 }
 
 func NewAPIKeyRepository(client *dbent.Client, sqlDB *sql.DB) service.APIKeyRepository {
@@ -43,7 +45,14 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 }
 
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
-	builder := r.client.APIKey.Create().
+	if r.protector != nil {
+		return r.createProtectedKey(ctx, key)
+	}
+	return r.createRecord(ctx, key)
+}
+
+func (r *apiKeyRepository) createRecord(ctx context.Context, key *service.APIKey) error {
+	builder := clientFromContext(ctx, r.client).APIKey.Create().
 		SetUserID(key.UserID).
 		SetKey(key.Key).
 		SetName(key.Name).
@@ -86,7 +95,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.protectedEntityToService(ctx, m)
 }
 
 // GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
@@ -97,7 +106,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 func (r *apiKeyRepository) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	m, err := r.activeQuery().
 		Where(apikey.IDEQ(id)).
-		Select(apikey.FieldKey, apikey.FieldUserID).
+		Select(apikey.FieldID, apikey.FieldKey, apikey.FieldUserID).
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -105,12 +114,13 @@ func (r *apiKeyRepository) GetKeyAndOwnerID(ctx context.Context, id int64) (stri
 		}
 		return "", 0, err
 	}
-	return m.Key, m.UserID, nil
+	raw, err := r.openKey(ctx, m.ID, m.Key)
+	return raw, m.UserID, err
 }
 
 func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
 	m, err := r.activeQuery().
-		Where(apikey.KeyEQ(key)).
+		Where(apikey.KeyEQ(r.lookupIdentity(key))).
 		WithUser(func(q *dbent.UserQuery) {
 			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
 				gq.Select(group.FieldID)
@@ -124,12 +134,12 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.protectedEntityToService(ctx, m)
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
 	m, err := r.activeQuery().
-		Where(apikey.KeyEQ(key)).
+		Where(apikey.KeyEQ(r.lookupIdentity(key))).
 		Select(
 			apikey.FieldID,
 			apikey.FieldUserID,
@@ -405,10 +415,12 @@ func (r *apiKeyRepository) DeleteWithAudit(ctx context.Context, id int64) error 
 }
 
 func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.Client, id int64, tombstoneKey string) error {
-	res, err := exec.ExecContext(ctx, `
-		UPDATE api_keys
-		SET key = $1, deleted_at = NOW(), updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL`, tombstoneKey, id)
+	query := `UPDATE api_keys SET key = $1, deleted_at = NOW(), updated_at = NOW()`
+	if r.protector != nil {
+		query += `, key_ciphertext = '', key_hint = ''`
+	}
+	query += ` WHERE id = $2 AND deleted_at IS NULL`
+	res, err := exec.ExecContext(ctx, query, tombstoneKey, id)
 	if err != nil {
 		return err
 	}
@@ -438,7 +450,7 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 	if filters.Search != "" {
 		q = q.Where(apikey.Or(
 			apikey.NameContainsFold(filters.Search),
-			apikey.KeyContainsFold(filters.Search),
+			apikey.KeyEQ(r.lookupIdentity(filters.Search)),
 		))
 	}
 	if filters.Status != "" {
@@ -478,7 +490,11 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
-		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+		decoded, err := r.protectedEntityToService(ctx, keys[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		outKeys = append(outKeys, *decoded)
 	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, nil, err
@@ -498,7 +514,11 @@ func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, fi
 
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
-		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+		decoded, err := r.protectedEntityToService(ctx, keys[i])
+		if err != nil {
+			return nil, err
+		}
+		outKeys = append(outKeys, *decoded)
 	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, err
@@ -615,7 +635,7 @@ func (r *apiKeyRepository) CountByUserID(ctx context.Context, userID int64) (int
 }
 
 func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, error) {
-	count, err := r.activeQuery().Where(apikey.KeyEQ(key)).Count(ctx)
+	count, err := r.activeQuery().Where(apikey.KeyEQ(r.lookupIdentity(key))).Count(ctx)
 	return count > 0, err
 }
 
@@ -642,7 +662,11 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
-		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+		decoded, err := r.protectedEntityToService(ctx, keys[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		outKeys = append(outKeys, *decoded)
 	}
 
 	return outKeys, paginationResultFromTotal(int64(total), params), nil
@@ -713,7 +737,11 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
-		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+		decoded, err := r.protectedEntityToService(ctx, keys[i])
+		if err != nil {
+			return nil, err
+		}
+		outKeys = append(outKeys, *decoded)
 	}
 	return outKeys, nil
 }
@@ -744,28 +772,13 @@ func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (i
 }
 
 func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
-	keys, err := r.activeQuery().
-		Where(apikey.UserIDEQ(userID)).
-		Select(apikey.FieldKey).
-		Strings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return keys, nil
+	return r.keyStrings(ctx, r.activeQuery().Where(apikey.UserIDEQ(userID)))
 }
 
 func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
-	keys, err := r.activeQuery().
-		Where(apikey.GroupIDEQ(groupID)).
-		Select(apikey.FieldKey).
-		Strings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return keys, nil
+	return r.keyStrings(ctx, r.activeQuery().Where(apikey.GroupIDEQ(groupID)))
 }
 
-// IncrementQuotaUsed 使用 Ent 原子递增 quota_used 字段并返回新值
 func (r *apiKeyRepository) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	updated, err := r.client.APIKey.UpdateOneID(id).
 		Where(apikey.DeletedAtIsNil()).
@@ -802,6 +815,13 @@ func (r *apiKeyRepository) IncrementQuotaUsedAndGetState(ctx context.Context, id
 			return nil, service.ErrAPIKeyNotFound
 		}
 		return nil, err
+	}
+	if r.protector != nil {
+		raw, err := r.openKey(ctx, id, state.Key)
+		if err != nil {
+			return nil, err
+		}
+		state.Key = raw
 	}
 	return state, nil
 }

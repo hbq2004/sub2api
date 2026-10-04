@@ -1,6 +1,6 @@
 param(
     [string]$Directory = (Join-Path $PSScriptRoot 'private-backups'),
-    [int]$MaxAgeHours = 24,
+    [int]$MaxAgeHours = 1,
     [switch]$RequireTodayAfterSixThirty
 )
 
@@ -23,6 +23,13 @@ if (([DateTimeOffset]::UtcNow - $verifiedAt).TotalHours -gt $MaxAgeHours) {
     throw 'Last verified backup is stale.'
 }
 $archive = Join-Path $Directory $marker.archive
+if ($marker.archive -notmatch '^\d{8}T\d{6}Z\.p7m$') { throw 'Backup timestamp is invalid.' }
+$snapshotUtc = [DateTimeOffset]::ParseExact(
+    ($marker.archive -replace '\.p7m$', ''), "yyyyMMdd'T'HHmmss'Z'", [Globalization.CultureInfo]::InvariantCulture,
+    [Globalization.DateTimeStyles]::AssumeUniversal)
+if (([DateTimeOffset]::UtcNow - $snapshotUtc).TotalHours -gt $MaxAgeHours) {
+    throw 'Backup snapshot is stale; a recent verification cannot replace fresh data.'
+}
 if (!(Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Last verified archive is missing.' }
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $marker.sha256) {
     throw 'Last verified archive hash changed.'

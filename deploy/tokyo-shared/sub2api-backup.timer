@@ -1,8 +1,9 @@
 [Unit]
-Description=Daily Sub2API backup
+Description=Sub2API encrypted backup every thirty minutes
 
 [Timer]
-OnCalendar=*-*-* 04:00:00
+OnCalendar=*-*-* *:00,30:00
+AccuracySec=1min
 Persistent=true
 Unit=sub2api-backup.service
 

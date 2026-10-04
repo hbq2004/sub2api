@@ -1070,6 +1070,7 @@
     />
 
     <!-- Use Key Modal -->
+    <TotpStepUpDialog :controller="keyRevealStepUp" />
     <UseKeyModal
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
@@ -1228,6 +1229,8 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import { useStepUp, isStepUpCancelled, isStepUpBlocked } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
@@ -1258,6 +1261,7 @@ interface GroupOption {
   platform: GroupPlatform
 }
 
+const keyRevealStepUp = useStepUp()
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
@@ -1567,7 +1571,22 @@ const filteredGroupOptions = computed(() => {
   })
 })
 
+const revealForUse = async (text: string, keyId: number): Promise<string> => {
+  if (!text.includes('*')) return text
+  return keyRevealStepUp.run(() => keysAPI.reveal(keyId))
+}
+
+const reportRevealError = (error: unknown) => {
+  if (isStepUpCancelled(error)) return
+  if (isStepUpBlocked(error)) {
+    appStore.showError('请先在个人资料中启用双因素认证，再查看或复制已有 API Key。')
+    return
+  }
+  appStore.showError(t('keys.failedToLoad'))
+}
+
 const copyToClipboard = async (text: string, keyId: number) => {
+  try { text = await revealForUse(text, keyId) } catch (error) { reportRevealError(error); return }
   const success = await clipboardCopy(text, t('keys.copied'))
   if (success) {
     copiedKeyId.value = keyId
@@ -1662,8 +1681,11 @@ const loadPublicSettings = async () => {
   }
 }
 
-const openUseKeyModal = (key: ApiKey) => {
-  selectedKey.value = key
+const openUseKeyModal = async (key: ApiKey) => {
+  try {
+    const raw = await revealForUse(key.key, key.id)
+    selectedKey.value = { ...key, key: raw }
+  } catch (error) { reportRevealError(error); return }
   showUseKeyModal.value = true
 }
 
@@ -1872,7 +1894,7 @@ const handleSubmit = async () => {
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
+      const createdKey = await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
         customKey,
@@ -1882,6 +1904,8 @@ const handleSubmit = async () => {
         expiresInDays,
         rateLimitData
       )
+      selectedKey.value = createdKey
+      showUseKeyModal.value = true
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1922,7 +1946,7 @@ const handleDelete = async () => {
 const closeModals = () => {
   showCreateModal.value = false
   showEditModal.value = false
-  selectedKey.value = null
+  if (!showUseKeyModal.value) selectedKey.value = null
   formData.value = {
     name: '',
     group_id: null,
@@ -2023,7 +2047,9 @@ const importToCcswitch = (row: ApiKey) => {
   executeCcsImport(row, platform === 'gemini' ? 'gemini' : 'claude')
 }
 
-const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
+const executeCcsImport = async (row: ApiKey, clientType: CcSwitchClientType) => {
+  let rawKey: string
+  try { rawKey = await revealForUse(row.key, row.id) } catch (error) { reportRevealError(error); return }
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
   const platform = row.group?.platform || 'anthropic'
 
@@ -2034,7 +2060,7 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
     platform,
     clientType,
     providerName,
-    apiKey: row.key,
+    apiKey: rawKey,
     usageScript
   })
 

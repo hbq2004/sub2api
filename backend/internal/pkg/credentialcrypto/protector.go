@@ -206,6 +206,17 @@ func (p *Protector) Lookup(apiKey string) string {
 	return "hmac-sha256:v1:" + hex.EncodeToString(mac.Sum(nil))
 }
 
+// LookupDownstream uses a distinct domain from upstream credentials.
+func (p *Protector) LookupDownstream(apiKey string) string {
+	if p == nil || apiKey == "" {
+		return apiKey
+	}
+	mac := hmac.New(sha256.New, p.lookupKey)
+	_, _ = mac.Write([]byte("sub2api/downstream-api-key/v1\x00"))
+	_, _ = mac.Write([]byte(apiKey))
+	return "hmac-sha256:downstream:v1:" + hex.EncodeToString(mac.Sum(nil))
+}
+
 func (p *Protector) LookupCandidates(apiKey string) []string {
 	if p == nil {
 		return []string{apiKey}

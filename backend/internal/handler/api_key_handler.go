@@ -180,6 +180,7 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 // Create handles creating a new API key
 // POST /api/v1/api-keys
 func (h *APIKeyHandler) Create(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -217,12 +218,19 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		svcReq.RateLimit7d = *req.RateLimit7d
 	}
 
-	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	var oneTimeKey string
+	executeUserIdempotentJSONWithResponse(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
 		if err != nil {
 			return nil, err
 		}
+		oneTimeKey = key.Key
 		return dto.APIKeyFromService(key), nil
+	}, func(data any) any {
+		if result, ok := data.(*dto.APIKey); ok {
+			result.Key = oneTimeKey
+		}
+		return data
 	})
 }
 
@@ -355,4 +363,29 @@ func (h *APIKeyHandler) GetUserGroupRates(c *gin.Context) {
 	}
 
 	response.Success(c, rates)
+}
+
+// Reveal requires an owner session and the mandatory recent TOTP route gate.
+func (h *APIKeyHandler) Reveal(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid key ID")
+		return
+	}
+	key, err := h.apiKeyService.GetByID(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if key.UserID != subject.UserID {
+		response.Forbidden(c, "API key belongs to another user")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, gin.H{"key": key.Key})
 }

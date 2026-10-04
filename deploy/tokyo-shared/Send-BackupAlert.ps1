@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Test', 'DailyCheckFailed', 'UsageSpike', 'LoginFailures', 'SecurityQueryFailed', 'MonitorStale')]
+    [ValidateSet('Test', 'DailyCheckFailed', 'UsageSpike', 'LoginFailures', 'SecurityQueryFailed', 'MonitorStale', 'HostUnavailable', 'HostRecovered', 'HostUnavailableTest', 'HostRecoveredTest')]
     [string]$Reason,
     [string]$Directory = (Join-Path $PSScriptRoot 'private-backups')
 )
@@ -23,6 +23,10 @@ if ($credential -isnot [pscredential] -or $credential.UserName -ne $settings.sen
 }
 
 $labels = @{
+    HostUnavailable = 'independent observer cannot reach the cloud API after three consecutive checks'
+    HostRecovered = 'independent observer confirms cloud API recovery'
+    HostUnavailableTest = 'TEST: independent outage notification; production was not interrupted'
+    HostRecoveredTest = 'TEST: independent recovery notification; production was not interrupted'
     Test = 'SMTP test'
     DailyCheckFailed = 'daily encrypted backup download or verification failed'
     UsageSpike = 'hourly API usage exceeded the alert threshold'

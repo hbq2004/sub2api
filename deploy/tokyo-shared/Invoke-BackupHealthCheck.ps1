@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-& $PSHOME\pwsh.exe -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Check-BackupStatus.ps1') -Directory $Directory -RequireTodayAfterSixThirty | Out-Null
+& $PSHOME\pwsh.exe -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Check-BackupStatus.ps1') -Directory $Directory -MaxAgeHours 1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     try {
         & $PSHOME\pwsh.exe -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Send-BackupAlert.ps1') -Reason DailyCheckFailed | Out-Null
