@@ -69,6 +69,7 @@ func LoadFromEnv(forbiddenKeys ...string) (*Protector, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G703 -- administrator configuration selects this path; this call only rejects non-regular file metadata.
 	original, err := os.Lstat(path)
 	if err != nil || !original.Mode().IsRegular() {
 		return nil, errors.New("upstream credential keyring must be a regular file")

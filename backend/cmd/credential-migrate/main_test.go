@@ -15,7 +15,7 @@ import (
 func TestPurgeCredentialCacheKeepsOtherNamespaces(t *testing.T) {
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	ctx := context.Background()
 	for _, key := range []string{"sched:acc:17", "sched:meta:17", "oauth:token:17", "oauth:refresh_lock:17", "auth:session:17", "billing:17", "sched:ready:17"} {
 		require.NoError(t, rdb.Set(ctx, key, "synthetic", 0).Err())

@@ -14,7 +14,8 @@ func TestHTTPUpstreamRequestHostUsesConfiguredAllowlist(t *testing.T) {
 		UpstreamHosts:     []string{"api.example.test"},
 		AllowPrivateHosts: true, // avoid DNS resolution in this unit test
 	}}}
-	svc := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	svc, ok := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	require.True(t, ok)
 
 	req, err := http.NewRequest(http.MethodGet, "https://unapproved.example.test/v1", nil)
 	require.NoError(t, err)
@@ -32,7 +33,8 @@ func TestHTTPUpstreamRequestHostRejectsHTTPWhenPolicyEnabled(t *testing.T) {
 		AllowPrivateHosts: true,
 		AllowInsecureHTTP: true, // enabled policy still requires HTTPS
 	}}}
-	svc := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	svc, ok := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	require.True(t, ok)
 	req, err := http.NewRequest(http.MethodGet, "http://api.example.test/v1", nil)
 	require.NoError(t, err)
 	require.Error(t, svc.validateRequestHost(req))

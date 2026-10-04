@@ -64,7 +64,7 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		if !rows.Next() {
 			if err := rows.Err(); err != nil {
 				return err
@@ -183,7 +183,7 @@ func (r *redeemCodeRepository) idByHash(ctx context.Context, code string) (int64
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return 0, err
@@ -588,7 +588,7 @@ func (r *redeemCodeRepository) plaintextCode(ctx context.Context, id int64, stor
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return "", err
@@ -686,7 +686,7 @@ func (r *redeemCodeRepository) verifyProtectedCodes(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var ciphertext, digest string
 		var version int

@@ -65,7 +65,10 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 }
 
 func ProvideProtectedSchedulerCache(rdb *redis.Client, cfg *config.Config, protector *credentialcrypto.Protector) service.SchedulerCache {
-	cache := ProvideSchedulerCache(rdb, cfg).(*schedulerCache)
+	cache, ok := ProvideSchedulerCache(rdb, cfg).(*schedulerCache)
+	if !ok {
+		panic("scheduler cache does not support credential protection")
+	}
 	cache.protector = protector
 	return cache
 }
