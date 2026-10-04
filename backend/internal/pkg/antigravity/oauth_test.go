@@ -687,6 +687,7 @@ func TestConstants_值正确(t *testing.T) {
 	defaultClientSecret = ""
 	t.Cleanup(func() { defaultClientSecret = oldSecret })
 	t.Setenv(AntigravityOAuthClientSecretEnv, "synthetic-client-secret")
+	defaultClientSecret = os.Getenv(AntigravityOAuthClientSecretEnv)
 	secret, err := getClientSecret()
 	if err != nil || secret != "synthetic-client-secret" {
 		t.Fatal("configured synthetic OAuth client secret was not selected")
