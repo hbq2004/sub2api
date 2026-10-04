@@ -660,7 +660,16 @@ export default {
     loadFailed: '加载模型广场失败',
     noSearchResult: '没有匹配的模型',
     anonymousHint: '登录后可查看你的专属分组与专属倍率',
+    types: {
+      chat: '对话',
+      image: 'GPT 绘画'
+    },
+    sections: {
+      chat: '对话模型',
+      image: 'GPT 绘画'
+    },
     filters: {
+      typeLabel: '类型',
       platformLabel: '平台',
       groupLabel: '分组',
       rateLabel: '倍率',

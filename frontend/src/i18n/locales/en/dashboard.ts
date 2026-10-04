@@ -655,7 +655,16 @@ export default {
     loadFailed: 'Failed to load model plaza',
     noSearchResult: 'No matching models',
     anonymousHint: 'Sign in to see your exclusive groups and personal rates',
+    types: {
+      chat: 'Chat',
+      image: 'GPT Images'
+    },
+    sections: {
+      chat: 'Chat Models',
+      image: 'GPT Images'
+    },
     filters: {
+      typeLabel: 'Type',
       platformLabel: 'Platform',
       groupLabel: 'Group',
       rateLabel: 'Rate',
