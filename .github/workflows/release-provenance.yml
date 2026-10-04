@@ -37,6 +37,11 @@ jobs:
           grep -q '^\*\*/\*\.env$' .dockerignore
       - name: Record immutable source revision
         run: git rev-parse --verify HEAD
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Verify publication and consumer preservation gates
+        run: node --test deploy/release-provenance.test.mjs deploy/key-integrity.test.mjs
       - name: Verify synthetic Docker build context
         shell: pwsh
         run: ./deploy/Test-DockerContext.ps1

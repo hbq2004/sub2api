@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, cpSync, rmSync, renameSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { keyBindingHash } from './key-integrity.mjs'
 
 const deploy = dirname(fileURLToPath(import.meta.url))
 const root = dirname(deploy)
@@ -72,12 +73,18 @@ async function waitHTTP(origin) {
 }
 const sql = (container, query, user = 'sub2api') => d(['exec', container, 'psql', '-U', user, '-d', 'sub2api', '-X', '-At', '-c', query])
 function integrity(container, user = 'sub2api') {
-  return JSON.parse(sql(container, `SELECT json_build_object(
+  const result = JSON.parse(sql(container, `SELECT json_build_object(
     'users',(SELECT count(*) FROM users), 'accounts',(SELECT count(*) FROM accounts),
     'groups',(SELECT count(*) FROM groups), 'api_keys',(SELECT count(*) FROM api_keys),
     'redeem_codes',(SELECT count(*) FROM redeem_codes),
-    'key_bindings',(SELECT md5(string_agg(id::text || ':' || key || ':' || coalesce(group_id::text,'') || ':' || status,'|' ORDER BY id)) FROM api_keys),
     'user_accounting',(SELECT md5(string_agg(id::text || ':' || email || ':' || password_hash || ':' || balance::text,'|' ORDER BY id)) FROM users))`, user))
+  const protectedColumns = sql(container, "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='api_keys' AND column_name='key_ciphertext')", user) === 't'
+  const rows = JSON.parse(sql(container, `SELECT coalesce(json_agg(r ORDER BY r.id),'[]') FROM
+    (SELECT id,user_id,group_id,status,key,deleted_at IS NOT NULL AS deleted,
+      ${protectedColumns ? 'key_ciphertext' : "''::text AS key_ciphertext"} FROM api_keys) r`, user))
+  const ring = existsSync(keyring) ? JSON.parse(readFileSync(keyring, 'utf8')) : null
+  result.key_bindings = keyBindingHash(rows, ring)
+  return result
 }
 function protection(container, user = 'sub2api') {
   return JSON.parse(sql(container, `SELECT json_build_object(
