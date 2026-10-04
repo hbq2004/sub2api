@@ -227,7 +227,7 @@ func TestAPIContracts(t *testing.T) {
 				"data": {
 					"id": 100,
 					"user_id": 1,
-					"key": "sk_custom_1234567890",
+                            "key": "sk_custom_1234567890",
 					"name": "Key One",
 					"group_id": null,
 					"status": "active",
@@ -278,10 +278,10 @@ func TestAPIContracts(t *testing.T) {
 						{
 							"id": 100,
 							"user_id": 1,
-							"key": "sk_custom_1234567890",
-							"name": "Key One",
-							"group_id": null,
-							"status": "active",
+                            "key": "sk_cus********7890",
+                            "name": "Key One",
+                            "group_id": null,
+                            "status": "active",
 							"ip_whitelist": null,
 							"ip_blacklist": null,
 							"last_used_at": null,

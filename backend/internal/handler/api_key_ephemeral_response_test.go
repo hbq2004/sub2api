@@ -23,7 +23,12 @@ func TestAPIKeyIdempotencyKeepsOneTimeBearerOutOfStorageAndReplay(t *testing.T) 
 	router.POST("/key", func(c *gin.Context) {
 		executeUserIdempotentJSONWithResponse(c, "user.api_keys.create", gin.H{"name": "test"}, time.Minute,
 			func(context.Context) (any, error) { return gin.H{"key": service.MaskAPIKey(raw)}, nil },
-			func(data any) any { data.(gin.H)["key"] = raw; return data })
+			func(data any) any {
+				value, ok := data.(gin.H)
+				require.True(t, ok)
+				value["key"] = raw
+				return value
+			})
 	})
 	request := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/key", nil)
