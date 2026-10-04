@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { randomBytes, createHash, createHmac } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, cpSync, rmSync, renameSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -173,29 +173,39 @@ function verifyDebugOwnership() {
   report.localProductionOwnership = counts
   return true
 }
-async function verifyFixtureAPI(origin, environment) {
-  const admin = JSON.parse(sql(fixturePG, "SELECT row_to_json(x) FROM (SELECT id,email,password_hash FROM users WHERE role='admin' AND deleted_at IS NULL LIMIT 1) x", 'postgres'))
-  const fingerprint = createHash('sha256').update(admin.email.trim().toLowerCase() + '\n' + admin.password_hash).digest().readBigUInt64BE() & 0x7fffffffffffffffn
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
-  const claims = JSON.stringify({ user_id: admin.id, email: admin.email, role: 'admin',
-    token_version: 'FINGERPRINT', exp: Math.floor(Date.now() / 1000) + 600,
-    iat: Math.floor(Date.now() / 1000) }).replace('"FINGERPRINT"', String(fingerprint))
-  const payload = header + '.' + Buffer.from(claims).toString('base64url')
-  const token = payload + '.' + createHmac('sha256', environment.JWT_SECRET).update(payload).digest('base64url')
+async function verifyFixtureAPI(origin) {
+  const email = `release-admin-${stamp}@example.invalid`
+  const password = randomBytes(24).toString('base64url') + 'aA1!'
+  sql(fixturePG, `CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    INSERT INTO users(email,password_hash,role,balance,concurrency,status,
+      username,notes,created_at,updated_at,totp_enabled,signup_source,restrict_public_groups,
+      balance_notify_enabled,balance_notify_threshold_type,balance_notify_extra_emails,total_recharged,rpm_limit,frozen_balance)
+    VALUES ('${email}',crypt('${password}',gen_salt('bf',10)),'admin',0,5,'active','','isolated release acceptance',
+      NOW(),NOW(),false,'email',false,false,'fixed','[]',0,0,0);
+    INSERT INTO settings(key,value) VALUES ('step_up_enabled','false'),('session_binding_enabled','false'),
+      ('turnstile_enabled','false'),('tencent_captcha_enabled','false'),('aliyun_captcha_enabled','false')
+    ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;`, 'postgres')
+  d(['restart', fixtureApp])
+  await waitHTTP(origin)
+  const adminLogin = await api(origin, 'POST', '/auth/login', { email, password })
+  assert.equal(adminLogin.status, 200, 'Synthetic administrator login')
+  const token = adminLogin.body.data?.access_token
+  assert.ok(token, 'Synthetic administrator session is missing')
   assert.equal((await api(origin, 'GET', '/auth/me', undefined, token)).status, 200)
-  for (const path of ['/admin/groups', '/admin/accounts', '/keys', '/admin/redeem-codes']) {
-    assert.equal((await api(origin, 'GET', path, undefined, token)).status, 200, `Fixture ${path}`)
-  }
-  record('Migrated accounts, groups, personal keys and protected redeem codes are readable')
+  // This acknowledgement belongs only to the disposable fixture identity.
   const compliance = await api(origin, 'GET', '/admin/compliance', undefined, token)
   if (compliance.body.data?.required) {
     assert.equal((await api(origin, 'POST', '/admin/compliance/accept', {
       phrase: compliance.body.data.ack_phrase_en, language: 'en' }, token)).status, 200)
   }
-  const email = `local-release-${stamp}@example.invalid`
-  const password = randomBytes(24).toString('base64url')
-  assert.equal((await api(origin, 'POST', '/admin/users', { email, password, role: 'user', balance: 0, concurrency: 1 }, token)).status, 200)
-  const login = await api(origin, 'POST', '/auth/login', { email, password })
+  for (const path of ['/admin/groups', '/admin/accounts', '/keys', '/admin/redeem-codes']) {
+    assert.equal((await api(origin, 'GET', path, undefined, token)).status, 200, `Fixture ${path}`)
+  }
+  record('Migrated accounts, groups, personal keys and protected redeem codes are readable')
+  const userEmail = `local-release-${stamp}@example.invalid`
+  const userPassword = randomBytes(24).toString('base64url') + 'aA1!'
+  assert.equal((await api(origin, 'POST', '/admin/users', { email: userEmail, password: userPassword, role: 'user', balance: 0, concurrency: 1 }, token)).status, 200)
+  const login = await api(origin, 'POST', '/auth/login', { email: userEmail, password: userPassword })
   assert.equal(login.status, 200)
   const userToken = login.body.data.access_token
   assert.ok(userToken)
@@ -284,7 +294,7 @@ try {
   assert.equal(protectedFixture.protected_codes, protectedFixture.redeem_codes)
   record('Isolated schema and encryption migration preserves records, key bindings and balances')
   assert.equal((await api(fixtureOrigin, 'GET', '/admin/accounts')).status, 401)
-  const fixtureAdminToken = await verifyFixtureAPI(fixtureOrigin, fixtureEnvironment)
+  const fixtureAdminToken = await verifyFixtureAPI(fixtureOrigin)
   const browserCredentialFile = join(work, 'browser-credential.json')
   writeFileSync(browserCredentialFile, JSON.stringify({ token: fixtureAdminToken }), { mode: 0o600 })
   const browserOutput = execute(process.execPath, [join(deploy, 'verify-local-release.mjs'),

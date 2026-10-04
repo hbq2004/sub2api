@@ -19,23 +19,23 @@ func TestAdminSensitiveRoutesRunStepUpBeforeAnySideEffect(t *testing.T) {
 		Setting: &admin.SettingHandler{}, System: &admin.SystemHandler{},
 	}}
 	gate := middleware.StepUpAuthMiddleware(func(c *gin.Context) {
-		middleware.AbortWithError(c,http.StatusForbidden,"STEP_UP_REQUIRED","Recent verification required")
+		middleware.AbortWithError(c, http.StatusForbidden, "STEP_UP_REQUIRED", "Recent verification required")
 	})
 	g := r.Group("/admin")
 	registerSettingsRoutes(g, h, gate)
 	registerSystemRoutes(g, h, gate)
-	for _, tc := range []struct {method,path string}{
-		{http.MethodPost,"/admin/settings/admin-api-key/regenerate"},
-		{http.MethodDelete,"/admin/settings/admin-api-key"},
-		{http.MethodPost,"/admin/system/update"},
-		{http.MethodPost,"/admin/system/rollback"},
-		{http.MethodPost,"/admin/system/restart"},
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/admin/settings/admin-api-key/regenerate"},
+		{http.MethodDelete, "/admin/settings/admin-api-key"},
+		{http.MethodPost, "/admin/system/update"},
+		{http.MethodPost, "/admin/system/rollback"},
+		{http.MethodPost, "/admin/system/restart"},
 	} {
-		t.Run(tc.path,func(t *testing.T){
+		t.Run(tc.path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec,httptest.NewRequest(tc.method,tc.path,nil))
-			require.Equal(t,http.StatusForbidden,rec.Code)
-			require.Contains(t,rec.Body.String(),"STEP_UP_REQUIRED")
+			r.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, rec.Code)
+			require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
 		})
 	}
 }

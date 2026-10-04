@@ -61,7 +61,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	selectedMode := *mode
 	if !*apply {
 		selectedMode = "verify"
@@ -81,7 +81,7 @@ func run() error {
 			}
 		}
 		rdb = redis.NewClient(&redis.Options{Addr: addr, DB: dbIndex, Username: os.Getenv("ACCOUNT_CREDENTIAL_MIGRATION_REDIS_USERNAME"), Password: os.Getenv("ACCOUNT_CREDENTIAL_MIGRATION_REDIS_PASSWORD")})
-		defer rdb.Close()
+		defer func() { _ = rdb.Close() }()
 		if err := rdb.Ping(ctx).Err(); err != nil {
 			return err
 		}

@@ -656,7 +656,9 @@ func (s *httpUpstreamService) shouldValidateResolvedIP() bool {
 // verify the hostname carried by the original request.
 func (s *httpUpstreamService) directDialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	base := newUpstreamDialer().DialContext
-	if !s.shouldValidateResolvedIP() && !service.HTTPUpstreamPublicHostsOnly(ctx) { return base(ctx, network, address) }
+	if !s.shouldValidateResolvedIP() && !service.HTTPUpstreamPublicHostsOnly(ctx) {
+		return base(ctx, network, address)
+	}
 	return urlvalidator.DialPublic(ctx, network, address, base)
 }
 
@@ -799,7 +801,9 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 		s.mu.Unlock()
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
-	if parsedProxy == nil { transport.DialContext = s.directDialContext }
+	if parsedProxy == nil {
+		transport.DialContext = s.directDialContext
+	}
 	client := &http.Client{Transport: transport}
 	if s.shouldValidateResolvedIP() {
 		client.CheckRedirect = s.redirectChecker
@@ -1486,7 +1490,9 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 		// 直连：使用 TLSFingerprintDialer
 		slog.Debug("tls_fingerprint_transport_direct")
 		baseDial := newUpstreamDialer().DialContext
-		if len(directDialers) > 0 { baseDial = directDialers[0] }
+		if len(directDialers) > 0 {
+			baseDial = directDialers[0]
+		}
 		dialer := tlsfingerprint.NewDialer(profile, baseDial)
 		transport.DialTLSContext = dialer.DialTLSContext
 	} else {

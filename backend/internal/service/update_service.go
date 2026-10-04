@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	ErrManagedReleaseUpdate = infraerrors.Forbidden("MANAGED_RELEASE_UPDATE_DISABLED", "Custom releases must be updated through the reviewed image deployment process")
+	ErrManagedReleaseUpdate      = infraerrors.Forbidden("MANAGED_RELEASE_UPDATE_DISABLED", "Custom releases must be updated through the reviewed image deployment process")
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 )

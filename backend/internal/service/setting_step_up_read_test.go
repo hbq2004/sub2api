@@ -11,7 +11,7 @@ import (
 type stepUpReadRepo struct {
 	SettingRepository
 	value string
-	err error
+	err   error
 }
 
 func (r *stepUpReadRepo) GetValue(context.Context, string) (string, error) {
@@ -20,10 +20,10 @@ func (r *stepUpReadRepo) GetValue(context.Context, string) (string, error) {
 
 func TestStepUpSettingReadFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		value string
-		err error
-		enabled bool
+		name      string
+		value     string
+		err       error
+		enabled   bool
 		wantError bool
 	}{
 		{"enabled", "true", nil, true, false},
@@ -34,7 +34,7 @@ func TestStepUpSettingReadFailsClosed(t *testing.T) {
 		{"invalid", "off", nil, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := &SettingService{settingRepo: &stepUpReadRepo{value:tc.value,err:tc.err}}
+			svc := &SettingService{settingRepo: &stepUpReadRepo{value: tc.value, err: tc.err}}
 			enabled, err := svc.IsStepUpEnabledStrict(context.Background())
 			require.Equal(t, tc.enabled, enabled)
 			require.Equal(t, tc.wantError, err != nil)

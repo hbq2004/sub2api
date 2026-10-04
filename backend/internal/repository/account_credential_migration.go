@@ -44,7 +44,7 @@ func MigrateAccountCredentials(ctx context.Context, db *sql.DB, protector *crede
 	if err != nil {
 		return report, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	query := "SELECT id, credentials FROM accounts ORDER BY id"
 	if mode != "verify" {
 		query += " FOR NO KEY UPDATE"
@@ -62,11 +62,11 @@ func MigrateAccountCredentials(ctx context.Context, db *sql.DB, protector *crede
 		var d document
 		var raw []byte
 		if err := rows.Scan(&d.id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return report, err
 		}
 		if json.Unmarshal(raw, &d.stored) != nil {
-			rows.Close()
+			_ = rows.Close()
 			return report, credentialcrypto.ErrProtection
 		}
 		report.Rows++
@@ -77,7 +77,7 @@ func MigrateAccountCredentials(ctx context.Context, db *sql.DB, protector *crede
 		}
 		if mode == "verify" {
 			if _, err := protector.Decrypt(d.id, d.stored); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return report, err
 			}
 		} else {
@@ -85,7 +85,7 @@ func MigrateAccountCredentials(ctx context.Context, db *sql.DB, protector *crede
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return report, err
 	}

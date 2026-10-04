@@ -69,13 +69,18 @@ func LoadFromEnv(forbiddenKeys ...string) (*Protector, error) {
 	if err != nil {
 		return nil, err
 	}
+	original, err := os.Lstat(path)
+	if err != nil || !original.Mode().IsRegular() {
+		return nil, errors.New("upstream credential keyring must be a regular file")
+	}
+	// #nosec G703 -- only administrator environment configuration selects this path; file identity and owner-only permissions are checked.
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("cannot open upstream credential keyring file")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(original, info) {
 		return nil, errors.New("upstream credential keyring must be a regular file")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {

@@ -56,7 +56,9 @@ func TestProtectorEncryptsUnknownFieldsAndAuthenticatesIdentity(t *testing.T) {
 		require.ErrorIs(t, err, ErrProtection)
 	}
 	tampered := cloneDocument(t, first)
-	tampered[EnvelopeKey].(map[string]any)["ciphertext"] = "broken"
+	tamperedEnvelope, ok := tampered[EnvelopeKey].(map[string]any)
+	require.True(t, ok)
+	tamperedEnvelope["ciphertext"] = "broken"
 	_, err = p.Decrypt(17, tampered)
 	require.ErrorIs(t, err, ErrProtection)
 	_, err = p.Encrypt(17, first)
@@ -269,7 +271,9 @@ func TestProtectorVersionOneCompatibilityAndUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, plain, restored)
 	tampered := cloneDocument(t, upgraded)
-	tampered[EnvelopeKey].(map[string]any)["version"] = float64(1)
+	tamperedEnvelope, ok := tampered[EnvelopeKey].(map[string]any)
+	require.True(t, ok)
+	tamperedEnvelope["version"] = float64(1)
 	_, err = p.Decrypt(17, tampered)
 	require.ErrorIs(t, err, ErrProtection)
 	rotated := testProtector(t, "v2", false)

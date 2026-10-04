@@ -52,7 +52,7 @@ func TestProtectedCredentialSnapshotPreservesCASAndHidesBindings(t *testing.T) {
 	require.NoError(t, err)
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	repo := &accountRepository{sql: db, protector: p}
 	for _, expected := range []map[string]any{old, {"access_token": "synthetic-stale", "refresh_token": "synthetic-refresh"}} {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT credentials FROM accounts WHERE id = $1 AND deleted_at IS NULL")).WithArgs(int64(17)).WillReturnRows(sqlmock.NewRows([]string{"credentials"}).AddRow(encoded))
@@ -72,9 +72,10 @@ func TestProtectedCredentialSnapshotPreservesCASAndHidesBindings(t *testing.T) {
 func TestProtectedSchedulerAndOAuthCacheRoundtrip(t *testing.T) {
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	p := syntheticCredentialProtector(t, "v1", true)
-	cache := NewSchedulerCache(rdb).(*schedulerCache)
+	cache, ok := NewSchedulerCache(rdb).(*schedulerCache)
+	require.True(t, ok)
 	cache.protector = p
 	ctx := context.Background()
 	account := &service.Account{ID: 17, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"api_key": "synthetic-api", "access_token": "synthetic-access", "refresh_token": "synthetic-refresh", "model_mapping": map[string]any{"test": "test"}}}
@@ -124,9 +125,10 @@ func TestProtectedSchedulerAndOAuthCacheRoundtrip(t *testing.T) {
 func TestProtectedCachesRejectTamperingAndRelocation(t *testing.T) {
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	p := syntheticCredentialProtector(t, "v1", false)
-	cache := NewSchedulerCache(rdb).(*schedulerCache)
+	cache, ok := NewSchedulerCache(rdb).(*schedulerCache)
+	require.True(t, ok)
 	cache.protector = p
 	ctx := context.Background()
 	account := &service.Account{ID: 17, Credentials: map[string]any{"api_key": "synthetic-cached-api", "access_token": "synthetic-cached-access"}}
@@ -146,7 +148,9 @@ func TestProtectedCachesRejectTamperingAndRelocation(t *testing.T) {
 	require.ErrorIs(t, err, credentialcrypto.ErrProtection)
 	var corrupt service.Account
 	require.NoError(t, json.Unmarshal([]byte(full), &corrupt))
-	corrupt.Credentials[credentialcrypto.EnvelopeKey].(map[string]any)["ciphertext"] = "broken"
+	corruptEnvelope, ok := corrupt.Credentials[credentialcrypto.EnvelopeKey].(map[string]any)
+	require.True(t, ok)
+	corruptEnvelope["ciphertext"] = "broken"
 	payload, err = json.Marshal(corrupt)
 	require.NoError(t, err)
 	require.NoError(t, rdb.Set(ctx, schedulerAccountKey("17"), payload, 0).Err())

@@ -66,7 +66,7 @@ func (r *accountRepository) createProtectedAccount(ctx context.Context, account 
 			return err
 		}
 		if tx != nil {
-			defer tx.Rollback()
+			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
@@ -200,7 +200,7 @@ func (r *accountRepository) bulkUpdateProtectedCredentials(ctx context.Context, 
 			return 0, err
 		}
 		if tx != nil {
-			defer tx.Rollback()
+			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
@@ -219,17 +219,17 @@ func (r *accountRepository) bulkUpdateProtectedCredentials(ctx context.Context, 
 		var d document
 		var raw []byte
 		if err := rows.Scan(&d.id, &d.kind, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, err
 		}
 		if json.Unmarshal(raw, &d.credentials) != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, credentialcrypto.ErrProtection
 		}
 		documents = append(documents, d)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return 0, err
 	}
