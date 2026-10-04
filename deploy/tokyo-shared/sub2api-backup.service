@@ -1,0 +1,8 @@
+[Unit]
+Description=Sub2API PostgreSQL and application state backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sub2api-backup

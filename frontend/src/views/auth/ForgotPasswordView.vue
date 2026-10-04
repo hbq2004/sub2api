@@ -42,6 +42,9 @@
 
       <!-- Form State -->
       <form v-else @submit.prevent="handleSubmit" class="space-y-5">
+        <p v-if="errorMessage" role="alert" class="break-words text-sm text-red-600 dark:text-red-400">
+          {{ errorMessage }}
+        </p>
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -88,7 +91,7 @@
         <!-- Submit Button -->
         <button
           type="submit"
-          :disabled="isLoading || (turnstileEnabled && !turnstileToken)"
+          :disabled="isLoading || (turnstileActive && !turnstileToken)"
           class="btn btn-primary w-full"
         >
           <svg
@@ -168,6 +171,7 @@ const aliyunCaptchaRegion = ref<string>('cn')
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
 const turnstileToken = ref<string>('')
 const tencentCaptchaRandstr = ref<string>('')
+const turnstileActive = computed(() => turnstileEnabled.value && Boolean(turnstileSiteKey.value))
 const aliyunCaptchaReady = computed(
   () =>
     aliyunCaptchaEnabled.value &&
@@ -182,7 +186,7 @@ const actionCaptchaEnabled = computed(
 )
 const captchaEnabled = computed(
   () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
+    turnstileActive.value || actionCaptchaEnabled.value
 )
 
 const formData = reactive({
@@ -277,7 +281,7 @@ function validateForm(): boolean {
   }
 
   // Turnstile validation
-  if (turnstileEnabled.value && !turnstileToken.value) {
+  if (turnstileActive.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
   }
@@ -288,6 +292,8 @@ function validateForm(): boolean {
 // ==================== Form Handlers ====================
 
 async function handleSubmit(): Promise<void> {
+  if (isLoading.value) return
+
   errorMessage.value = ''
 
   if (!validateForm()) {

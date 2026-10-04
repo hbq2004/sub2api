@@ -832,6 +832,10 @@ func (s *emailBindCacheStub) DeleteVerificationCode(context.Context, string) err
 	return nil
 }
 
+func (s *emailBindCacheStub) DeleteVerificationCodeIfMatch(context.Context, string, string) error {
+	return nil
+}
+
 func (s *emailBindCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -992,6 +996,12 @@ func (s *emailBindRefreshTokenCacheStub) IsTokenInFamily(_ context.Context, fami
 	defer s.mu.Unlock()
 	_, ok := s.families[familyID][tokenHash]
 	return ok, nil
+}
+
+func (s *emailBindRefreshTokenCacheStub) IsTokenFamilyActive(_ context.Context, familyID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.families[familyID]) > 0, nil
 }
 
 type emailBindUserRepoStub struct {
@@ -1164,4 +1174,20 @@ func cloneEmailBindUser(user *service.User) *service.User {
 	}
 	cloned := *user
 	return &cloned
+}
+
+func (s *emailBindCacheStub) IncrVerificationCodeAttempts(context.Context, string) (int, error) {
+	if s.data == nil {
+		return 0, errors.New("verification code not found")
+	}
+	s.data.Attempts++
+	return s.data.Attempts, nil
+}
+
+func (s *emailBindCacheStub) IncrNotifyVerifyCodeAttempts(context.Context, string) (int, error) {
+	return 0, errors.New("notify verification code not found")
+}
+
+func (s *emailBindCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }

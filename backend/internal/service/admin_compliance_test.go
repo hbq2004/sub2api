@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -75,6 +76,41 @@ func TestAcceptAdminComplianceRejectsWrongPhrase(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrAdminComplianceInvalidPhrase))
+}
+
+func TestAdminComplianceUsesConfiguredSiteNameAndRequiresExactInput(t *testing.T) {
+	const siteName = "智驿 AI"
+	for _, language := range []string{"zh-CN", "en"} {
+		t.Run(language, func(t *testing.T) {
+			repo := &adminComplianceRepoStub{values: map[string]string{SettingKeySiteName: siteName}}
+			svc := NewSettingService(repo, &config.Config{})
+			status, err := svc.GetAdminComplianceStatus(context.Background(), 42)
+			require.NoError(t, err)
+			require.Contains(t, status.AckPhraseZH, siteName)
+			require.Contains(t, status.AckPhraseEN, siteName)
+			require.True(t, status.Required)
+
+			legacyPhrase := strings.ReplaceAll(expectedAdminCompliancePhrase(language), defaultSiteName, "Sub2API")
+			for _, phrase := range []string{"", "我同意", legacyPhrase} {
+				_, err = svc.AcceptAdminCompliance(context.Background(), AdminComplianceAcceptInput{
+					AdminUserID: 42, Language: language, Phrase: phrase,
+				})
+				require.ErrorIs(t, err, ErrAdminComplianceInvalidPhrase)
+				require.Empty(t, repo.values[adminComplianceAcknowledgementKey(42)])
+			}
+
+			phrase := status.AckPhraseEN
+			if language == "zh-CN" {
+				phrase = status.AckPhraseZH
+			}
+			accepted, err := svc.AcceptAdminCompliance(context.Background(), AdminComplianceAcceptInput{
+				AdminUserID: 42, Language: language, Phrase: phrase,
+			})
+			require.NoError(t, err)
+			require.False(t, accepted.Required)
+			require.NotEmpty(t, repo.values[adminComplianceAcknowledgementKey(42)])
+		})
+	}
 }
 
 func TestAcceptAdminCompliancePersistsCurrentVersion(t *testing.T) {

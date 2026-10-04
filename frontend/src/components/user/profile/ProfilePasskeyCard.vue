@@ -173,6 +173,7 @@
         </div>
       </div>
     </div>
+    <TotpStepUpDialog :controller="passkeyStepUp" />
   </div>
 </template>
 
@@ -180,13 +181,16 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { Icon } from '@/components/icons'
+import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{ enabled: boolean }>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const passkeyStepUp = useStepUp()
 const supported = passkeyAPI.isSupported()
 const loading = ref(false)
 const busy = ref(false)
@@ -228,12 +232,12 @@ async function addPasskey(): Promise<void> {
   if (newPassword.value.length === 0) return
   busy.value = true
   try {
-    await passkeyAPI.register(newName.value.trim(), newPassword.value)
+    await passkeyStepUp.run(() => passkeyAPI.register(newName.value.trim(), newPassword.value))
     appStore.showSuccess(t('profile.passkey.added'))
     cancelAdd()
     await loadCredentials()
   } catch (error) {
-    if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
+    if (!isStepUpCancelled(error) && !(error instanceof DOMException && error.name === 'NotAllowedError')) {
       appStore.showError(extractErrorMessage(error, t('profile.passkey.addFailed')))
     }
   } finally {
@@ -277,13 +281,15 @@ async function confirmDelete(): Promise<void> {
   if (!credential || deletePassword.value.length === 0) return
   busy.value = true
   try {
-    await passkeyAPI.remove(credential.id, deletePassword.value)
+    await passkeyStepUp.run(() => passkeyAPI.remove(credential.id, deletePassword.value))
     credentials.value = credentials.value.filter((item) => item.id !== credential.id)
     appStore.showSuccess(t('profile.passkey.deleted'))
     closeDeleteDialog()
   } catch (error) {
     // 密码错误等失败保持对话框打开，允许重试
-    appStore.showError(extractErrorMessage(error, t('profile.passkey.deleteFailed')))
+    if (!isStepUpCancelled(error)) {
+      appStore.showError(extractErrorMessage(error, t('profile.passkey.deleteFailed')))
+    }
   } finally {
     busy.value = false
   }

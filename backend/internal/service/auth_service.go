@@ -63,7 +63,8 @@ type JWTClaims struct {
 	Role         string `json:"role"`
 	TokenVersion int64  `json:"token_version"` // Used to invalidate tokens on password change
 	// SessionID 会话 ID（与 refresh token family 对应），用于单会话撤销与 step-up 授权绑定。
-	SessionID string `json:"sid,omitempty"`
+	SessionID     string `json:"sid,omitempty"`
+	SessionBacked bool   `json:"session_backed,omitempty"`
 	// BindingHash 会话指纹哈希（IP+UA），会话绑定开启时校验；空值表示旧 token（平滑升级）。
 	BindingHash string `json:"bnd,omitempty"`
 	jwt.RegisteredClaims
@@ -164,6 +165,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
+	}
+	if err := validatePasswordLength(password); err != nil {
+		return "", nil, err
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
@@ -329,7 +333,7 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 
 	// 发送验证码
 	if s.emailService == nil {
-		return errors.New("email service not configured")
+		return ErrEmailNotConfigured
 	}
 
 	// 获取网站名称
@@ -341,55 +345,13 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 	return s.emailService.SendVerifyCode(ctx, email, siteName, firstEmailLocale(locale))
 }
 
-// SendVerifyCodeAsync 异步发送邮箱验证码并返回倒计时
-func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
-	logger.LegacyPrintf("service.auth", "[Auth] SendVerifyCodeAsync called for email: %s", email)
-
-	// 检查是否开放注册（默认关闭）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Registration is disabled")
-		return nil, ErrRegDisabled
-	}
-
-	if isReservedEmail(email) {
-		return nil, ErrEmailReserved
-	}
-	// 检查邮箱是否已存在（含 +别名 / Gmail 点号变体归一化；在发信前拦截，避免批量脚本消耗发信配额）
-	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
-	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Database error checking email exists: %v", err)
-		return nil, ErrServiceUnavailable
-	}
-	if existsEmail {
-		logger.LegacyPrintf("service.auth", "[Auth] Email already exists: %s", email)
-		return nil, ErrEmailExists
-	}
-	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
+// SendVerifyCodeWithResult waits for SMTP acceptance before reporting success.
+func (s *AuthService) SendVerifyCodeWithResult(ctx context.Context, email string, locale ...string) (*SendVerifyCodeResult, error) {
+	if err := s.SendVerifyCode(ctx, email, firstEmailLocale(locale)); err != nil {
 		return nil, err
 	}
-
-	// 检查邮件队列服务是否配置
-	if s.emailQueueService == nil {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email queue service not configured")
-		return nil, errors.New("email queue service not configured")
-	}
-
-	// 获取网站名称
-	siteName := "Sub2API"
-	if s.settingService != nil {
-		siteName = s.settingService.GetSiteName(ctx)
-	}
-
-	// 异步发送
-	logger.LegacyPrintf("service.auth", "[Auth] Enqueueing verify code for: %s", email)
-	if err := s.emailQueueService.EnqueueVerifyCode(email, siteName, firstEmailLocale(locale)); err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to enqueue: %v", err)
-		return nil, fmt.Errorf("enqueue verify code: %w", err)
-	}
-
-	logger.LegacyPrintf("service.auth", "[Auth] Verify code enqueued successfully for: %s", email)
 	return &SendVerifyCodeResult{
-		Countdown: 60, // 60秒倒计时
+		Countdown: int(verifyCodeCooldown / time.Second),
 	}, nil
 }
 
@@ -1413,11 +1375,11 @@ func (s *AuthService) GenerateToken(ctx context.Context, user *User) (string, er
 	if err != nil {
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
-	return s.generateAccessToken(user, sessionID, sessionBindingHashFromContext(ctx))
+	return s.generateAccessToken(user, sessionID, sessionBindingHashFromContext(ctx), false)
 }
 
 // generateAccessToken 生成带会话 ID 与绑定指纹的 access token。
-func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string) (string, error) {
+func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string, sessionBacked bool) (string, error) {
 	now := time.Now()
 	var expiresAt time.Time
 	if s.cfg.JWT.AccessTokenExpireMinutes > 0 {
@@ -1428,12 +1390,13 @@ func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash str
 	}
 
 	claims := &JWTClaims{
-		UserID:       user.ID,
-		Email:        user.Email,
-		Role:         user.Role,
-		TokenVersion: resolvedTokenVersion(user),
-		SessionID:    sessionID,
-		BindingHash:  bindingHash,
+		UserID:        user.ID,
+		Email:         user.Email,
+		Role:          user.Role,
+		TokenVersion:  resolvedTokenVersion(user),
+		SessionID:     sessionID,
+		SessionBacked: sessionBacked,
+		BindingHash:   bindingHash,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -1461,6 +1424,9 @@ func (s *AuthService) GetAccessTokenExpiresIn() int {
 
 // HashPassword 使用bcrypt加密密码
 func (s *AuthService) HashPassword(password string) (string, error) {
+	if err := validatePasswordLength(password); err != nil {
+		return "", err
+	}
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return "", err
@@ -1621,6 +1587,9 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 	if s.emailService == nil {
 		return ErrServiceUnavailable
 	}
+	if err := validatePasswordLength(newPassword); err != nil {
+		return err
+	}
 
 	// Verify and consume the reset token (one-time use)
 	if err := s.emailService.ConsumePasswordResetToken(ctx, email, token); err != nil {
@@ -1703,7 +1672,7 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 	}
 
 	// 生成Access Token（携带会话ID与绑定指纹）
-	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx))
+	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx), true)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -1762,13 +1731,18 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	// 添加到用户Token集合
 	if err := s.refreshTokenCache.AddToUserTokenSet(ctx, user.ID, tokenHash, ttl); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to add token to user set: %v", err)
-		// 不影响主流程
+		_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+		return "", ErrServiceUnavailable
 	}
 
 	// 添加到家族Token集合
 	if err := s.refreshTokenCache.AddToFamilyTokenSet(ctx, familyID, tokenHash, ttl); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to add token to family set: %v", err)
-		// 不影响主流程
+		_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+		if errors.Is(err, ErrTokenRevoked) {
+			return "", ErrTokenRevoked
+		}
+		return "", ErrServiceUnavailable
 	}
 
 	return rawToken, nil
@@ -1802,6 +1776,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	}
 
 	// 检查Token是否过期
+	if data.FamilyID != "" {
+		active, err := s.refreshTokenCache.IsTokenFamilyActive(ctx, data.FamilyID)
+		if err != nil {
+			return nil, ErrServiceUnavailable
+		}
+		if !active {
+			return nil, ErrTokenRevoked
+		}
+	}
 	if time.Now().After(data.ExpiresAt) {
 		// 删除过期Token
 		_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
@@ -1871,7 +1854,41 @@ func (s *AuthService) RevokeRefreshToken(ctx context.Context, refreshToken strin
 	}
 
 	tokenHash := hashToken(refreshToken)
+	data, err := s.refreshTokenCache.GetRefreshToken(ctx, tokenHash)
+	if errors.Is(err, ErrRefreshTokenNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if data != nil && data.FamilyID != "" {
+		return s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+	}
 	return s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+}
+
+func (s *AuthService) ValidateAccessSession(ctx context.Context, claims *JWTClaims) error {
+	if claims == nil {
+		return ErrInvalidToken
+	}
+	// Legacy and standalone access tokens keep their existing expiry semantics.
+	if !claims.SessionBacked {
+		return nil
+	}
+	if claims.SessionID == "" {
+		return ErrTokenRevoked
+	}
+	if s.refreshTokenCache == nil {
+		return ErrServiceUnavailable
+	}
+	active, err := s.refreshTokenCache.IsTokenFamilyActive(ctx, claims.SessionID)
+	if err != nil {
+		return ErrServiceUnavailable
+	}
+	if !active {
+		return ErrTokenRevoked
+	}
+	return nil
 }
 
 // RevokeSessionFamily 撤销单个会话家族（该会话的所有 refresh token）。
@@ -1906,6 +1923,7 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)
+		return ErrServiceUnavailable
 	}
 	return nil
 }

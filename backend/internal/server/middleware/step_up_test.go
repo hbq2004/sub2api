@@ -35,8 +35,36 @@ type stubStepUpSettingReader struct {
 	enabled bool
 }
 
-func (s stubStepUpSettingReader) IsStepUpEnabled(ctx context.Context) bool {
-	return s.enabled
+func (s stubStepUpSettingReader) IsStepUpEnabledStrict(ctx context.Context) (bool, error) {
+	return s.enabled, nil
+}
+
+type strictStepUpSettingReader struct {
+	enabled bool
+	err     error
+}
+
+func (s strictStepUpSettingReader) IsStepUpEnabledStrict(ctx context.Context) (bool, error) {
+	return s.enabled, s.err
+}
+
+func TestRequiredStepUpDoesNotAllowDisabledSetting(t *testing.T) {
+	for _, method := range []string{"jwt", service.AuditAuthMethodAdminAPIKey} {
+		t.Run(method, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			auth := StepUpAuthMiddleware(stepUpAuth(stubStepUpGrantChecker{},
+				stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}},
+				stubStepUpSettingReader{enabled: false}))
+			r.POST("/sensitive", func(c *gin.Context) {
+				c.Set("auth_method", method)
+				c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+			}, RequireStepUp(auth), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sensitive", nil))
+			require.Equal(t, http.StatusForbidden, rec.Code)
+		})
+	}
 }
 
 // stepUpEnabled 功能开关开启的设置桩，供既有门控分支测试使用。
@@ -88,6 +116,17 @@ func TestEnforceStepUpFailsClosedOnGrantError(t *testing.T) {
 	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
 
 	ok := enforceStepUp(c, stubStepUpGrantChecker{err: errors.New("redis down")}, stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}}, stepUpEnabled)
+
+	require.False(t, ok)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "STEP_UP_UNAVAILABLE")
+}
+
+func TestEnforceStepUpFailsClosedOnSettingReadError(t *testing.T) {
+	c, rec := newStepUpTestContext(t)
+	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+
+	ok := enforceStepUp(c, stubStepUpGrantChecker{granted: true}, stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}}, strictStepUpSettingReader{err: errors.New("database unavailable")})
 
 	require.False(t, ok)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -33,7 +35,8 @@ func redeemRateLimitKey(userID int64) string {
 
 // redeemLockKey generates the Redis key for redeem code locking.
 func redeemLockKey(code string) string {
-	return redeemLockKeyPrefix + code
+	digest := sha256.Sum256([]byte(code))
+	return redeemLockKeyPrefix + hex.EncodeToString(digest[:])
 }
 
 type redeemCache struct {

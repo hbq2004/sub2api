@@ -42,15 +42,24 @@
         :group-id="selectedGroupId"
         :rate="selectedRate"
         :search="searchQuery"
+        :model-type="selectedModelType"
         @update:platform="selectedPlatform = $event"
         @update:group-id="selectedGroupId = $event"
         @update:rate="selectedRate = $event"
         @update:search="searchQuery = $event"
+        @update:model-type="selectedModelType = $event"
       />
 
       <!-- 分组分节的模型清单(默认按生效倍率升序) -->
       <div v-if="filteredGroups.length > 0" class="space-y-5">
-        <PlazaGroupSection v-for="g in filteredGroups" :key="g.id" :group="g" />
+        <section v-if="chatGroups.length" data-testid="plaza-chat-models" class="space-y-5">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('modelPlaza.sections.chat') }}</h2>
+          <PlazaGroupSection v-for="g in chatGroups" :key="g.id" :group="g" />
+        </section>
+        <section v-if="imageGroups.length" data-testid="plaza-image-models" class="space-y-5">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('modelPlaza.sections.image') }}</h2>
+          <PlazaGroupSection v-for="g in imageGroups" :key="g.id" :group="g" />
+        </section>
       </div>
       <div
         v-else
@@ -72,6 +81,7 @@ import PlazaFilterBar from './PlazaFilterBar.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
 import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
 import { useAuthStore } from '@/stores/auth'
+import { isGPTImageModel, type PlazaModelType } from '@/utils/modelPlaza'
 
 const props = defineProps<{
   response: ModelPlazaResponse | null
@@ -89,6 +99,7 @@ const selectedPlatform = ref<string>('all')
 const selectedGroupId = ref<number | 'all'>('all')
 const selectedRate = ref<number | 'all'>('all')
 const searchQuery = ref('')
+const selectedModelType = ref<PlazaModelType>('all')
 
 const searchActive = computed(() => searchQuery.value.trim() !== '')
 
@@ -103,12 +114,21 @@ function effectiveRate(g: ModelPlazaGroup): number {
   return g.user_rate_multiplier ?? g.rate_multiplier
 }
 
+const typeGroups = computed(() => {
+  const groups = props.response?.groups ?? []
+  if (selectedModelType.value === 'all') return groups
+  const images = selectedModelType.value === 'image'
+  return groups
+    .map((g) => ({ ...g, models: g.models.filter((m) => isGPTImageModel(m) === images) }))
+    .filter((g) => g.models.length > 0)
+})
+
 const platforms = computed(() =>
-  [...new Set((props.response?.groups ?? []).map((g) => g.platform).filter(Boolean))].sort()
+  [...new Set(typeGroups.value.map((g) => g.platform).filter(Boolean))].sort()
 )
 
 const groupOptions = computed(() =>
-  (props.response?.groups ?? []).map((g) => ({
+  typeGroups.value.map((g) => ({
     id: g.id,
     name: g.name,
     platform: g.platform,
@@ -118,8 +138,17 @@ const groupOptions = computed(() =>
 
 /** 全量生效倍率;当前组合下不可用的项由 FilterBar 置灰而非隐藏。 */
 const rates = computed(() =>
-  [...new Set((props.response?.groups ?? []).map(effectiveRate))].sort((a, b) => a - b)
+  [...new Set(typeGroups.value.map(effectiveRate))].sort((a, b) => a - b)
 )
+
+watch(typeGroups, (groups) => {
+  if (selectedPlatform.value !== 'all' && !groups.some((g) => g.platform === selectedPlatform.value)) {
+    selectedPlatform.value = 'all'
+  }
+  if (selectedGroupId.value !== 'all' && !groups.some((g) => g.id === selectedGroupId.value)) {
+    selectedGroupId.value = 'all'
+  }
+})
 
 /** 数据刷新后选中的倍率可能不复存在,重置为全部。 */
 watch(rates, (list) => {
@@ -129,7 +158,7 @@ watch(rates, (list) => {
 })
 
 const filteredGroups = computed(() => {
-  let groups = props.response?.groups ?? []
+  let groups = typeGroups.value
   if (selectedPlatform.value !== 'all') {
     groups = groups.filter((g) => g.platform === selectedPlatform.value)
   }
@@ -151,6 +180,14 @@ const filteredGroups = computed(() => {
     (a, b) => effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name)
   )
 })
+
+const chatGroups = computed(() => filteredGroups.value
+  .map((g) => ({ ...g, models: g.models.filter((m) => !isGPTImageModel(m)) }))
+  .filter((g) => g.models.length > 0))
+
+const imageGroups = computed(() => filteredGroups.value
+  .map((g) => ({ ...g, models: g.models.filter(isGPTImageModel) }))
+  .filter((g) => g.models.length > 0))
 </script>
 
 <style scoped>

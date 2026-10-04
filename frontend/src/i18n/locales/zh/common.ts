@@ -168,7 +168,7 @@ export default {
     apiKeys: 'API 密钥',
     batchImage: '批量生图',
     usage: '使用记录',
-    redeem: '兑换',
+    redeem: '充值/兑换',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',
     affiliateInviteRecords: '邀请记录',
@@ -239,12 +239,15 @@ export default {
     emailPlaceholder: '请输入邮箱',
     passwordLabel: '密码',
     passwordPlaceholder: '请输入密码',
+    showPassword: '显示密码',
+    hidePassword: '隐藏密码',
     createPasswordPlaceholder: '创建一个安全的密码',
     passwordHint: '至少 6 个字符',
     emailRequired: '请输入邮箱',
     invalidEmail: '请输入有效的邮箱地址',
     passwordRequired: '请输入密码',
     passwordMinLength: '密码至少需要 6 个字符',
+    passwordTooLong: '密码过长，请缩短后重试',
     loginFailed: '登录失败，请检查您的凭据后重试。',
     errors: {
       USER_NOT_ACTIVE: '账号已被禁用',
@@ -346,7 +349,8 @@ export default {
       }
     },
     emailOAuth: {
-      signIn: '使用 {providerName} 登录'
+      signIn: '使用 {providerName} 登录',
+      callbackFailed: '登录未完成'
     },
     oidc: {
       signIn: '使用 {providerName} 登录',

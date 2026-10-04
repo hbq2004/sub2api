@@ -1,0 +1,11 @@
+[Unit]
+Description=Sub2API encrypted backup every thirty minutes
+
+[Timer]
+OnCalendar=*-*-* *:00,30:00
+AccuracySec=1min
+Persistent=true
+Unit=sub2api-backup.service
+
+[Install]
+WantedBy=timers.target

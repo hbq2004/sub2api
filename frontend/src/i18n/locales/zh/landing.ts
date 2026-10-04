@@ -12,11 +12,12 @@ export default {
     switchToDark: '切换到深色模式',
     dashboard: '控制台',
     login: '登录',
+    backToHome: '返回首页',
     getStarted: '立即开始',
     goToDashboard: '进入控制台',
     // 新增：面向用户的价值主张
-    heroSubtitle: '一个密钥，畅用多个 AI 模型',
-    heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
+    heroSubtitle: 'GPT API 服务平台',
+    heroDescription: '通过一个 API 密钥接入 GPT，统一管理用量与配额',
     tags: {
       subscriptionToApi: '订阅转 API',
       stickySession: '会话保持',
@@ -51,7 +52,7 @@ export default {
     },
     features: {
       unifiedGateway: '一键接入',
-      unifiedGatewayDesc: '获取一个 API 密钥，即可调用所有已接入的 AI 模型，无需分别申请。',
+      unifiedGatewayDesc: '获取一个 API 密钥，即可接入 GPT 模型，统一管理调用与用量。',
       multiAccount: '稳定可靠',
       multiAccountDesc: '智能调度多个上游账号，自动切换和负载均衡，告别频繁报错。',
       balanceQuota: '用多少付多少',
@@ -95,7 +96,7 @@ export default {
     },
     providers: {
       title: '已支持的 AI 模型',
-      description: '一个 API，多种选择',
+      description: '目前仅支持 GPT',
       supported: '已支持',
       soon: '即将推出',
       claude: 'Claude',
@@ -192,8 +193,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API 安装向导',
-    description: '配置您的 Sub2API 实例',
+    title: '智驿 AI 安装向导',
+    description: '配置您的 智驿 AI 实例',
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',

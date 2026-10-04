@@ -518,7 +518,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		validityDays := redeemCode.ValidityDays
 		if validityDays < 0 {
 			// 负数天数：缩短订阅，减到 0 则取消订阅
-			if err := s.reduceOrCancelSubscription(txCtx, userID, *redeemCode.GroupID, -validityDays, redeemCode.Code); err != nil {
+			if err := s.reduceOrCancelSubscription(txCtx, userID, *redeemCode.GroupID, -validityDays, fmt.Sprintf("#%d", redeemCode.ID)); err != nil {
 				return nil, fmt.Errorf("reduce or cancel subscription: %w", err)
 			}
 		} else {
@@ -530,7 +530,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 				GroupID:      *redeemCode.GroupID,
 				ValidityDays: validityDays,
 				AssignedBy:   0, // 系统分配
-				Notes:        fmt.Sprintf("通过兑换码 %s 兑换", redeemCode.Code),
+				Notes:        fmt.Sprintf("通过兑换码 #%d 兑换", redeemCode.ID),
 			})
 			if err != nil {
 				return nil, fmt.Errorf("assign or extend subscription: %w", err)

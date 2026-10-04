@@ -256,6 +256,8 @@ docker compose down -v
 | `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
 | `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
+| `REDEEM_CODE_HMAC_KEY` | **Required for protected redeem codes** | *(unset)* | Dedicated 32-byte HMAC lookup key; do not reuse TOTP keys |
+| `REDEEM_CODE_ENCRYPTION_KEY` | **Required for protected redeem codes** | *(unset)* | Dedicated 32-byte AES-256-GCM key; do not reuse TOTP keys |
 | `SERVER_PORT` | No | `8080` | Server port |
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
@@ -269,6 +271,21 @@ docker compose down -v
 See `.env.example` for all available options.
 
 > **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
+
+### GitHub and Google one-click login
+
+GitHub and Google email sign-in are already built into the frontend and backend. Configure them from **Admin -> Settings -> Security -> Email OAuth Sign-in**; no extra OAuth library or sidecar service is required.
+
+Create provider credentials first, then enter the client ID and secret in the admin page and enable the provider:
+
+| Provider | Credential type | Required scopes | Exact backend callback |
+|----------|-----------------|-----------------|------------------------|
+| GitHub | OAuth App ([Developer settings](https://github.com/settings/developers)) | `read:user user:email` | `https://your-domain.example/api/v1/auth/oauth/github/callback` |
+| Google | OAuth client ID -> **Web application** ([Google Cloud Credentials](https://console.cloud.google.com/apis/credentials)) | `openid email profile` | `https://your-domain.example/api/v1/auth/oauth/google/callback` |
+
+The callback URL must match the provider configuration exactly, including scheme, host, port, path, and trailing slash. Leave **Frontend Callback URL** as `/auth/oauth/callback` unless the frontend is served at a custom callback path. Use the **Generate and copy** button in the admin page to avoid a path typo.
+
+The login flow validates a server-generated `state`, exchanges the authorization code on the backend, and uses the provider's verified email to find or create the local identity. Existing users sign in directly; a new email is sent through the normal OAuth registration completion step. New users can complete registration only when the site's registration setting permits it. Provider access tokens are not stored as local login credentials.
 
 ### Easy Migration (Local Directory Version)
 

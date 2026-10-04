@@ -1,5 +1,23 @@
 <template>
   <div class="space-y-3">
+    <div class="flex items-start gap-2">
+      <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
+        {{ t('modelPlaza.filters.typeLabel') }}
+      </span>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          v-for="type in (['all', 'chat', 'image'] as const)"
+          :key="type"
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
+          :class="chipClass(modelType === type)"
+          :aria-pressed="modelType === type"
+          @click="$emit('update:modelType', type)"
+        >
+          {{ type === 'all' ? t('modelPlaza.filters.all') : t(`modelPlaza.types.${type}`) }}
+        </button>
+      </div>
+    </div>
     <!-- 一级:平台 -->
     <div class="flex items-start gap-2">
       <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
@@ -116,6 +134,7 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformAccentColor } from '@/utils/platformColors'
 import type { GroupPlatform } from '@/types'
+import type { PlazaModelType } from '@/utils/modelPlaza'
 
 const props = defineProps<{
   /** 数据中出现的平台(去重排序后)。 */
@@ -129,6 +148,7 @@ const props = defineProps<{
   rate: number | 'all'
   /** 模型名搜索词(纯前端过滤)。 */
   search: string
+  modelType: PlazaModelType
 }>()
 
 defineEmits<{
@@ -136,6 +156,7 @@ defineEmits<{
   'update:groupId': [value: number | 'all']
   'update:rate': [value: number | 'all']
   'update:search': [value: string]
+  'update:modelType': [value: PlazaModelType]
 }>()
 
 const { t } = useI18n()

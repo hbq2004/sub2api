@@ -12,11 +12,12 @@ export default {
     switchToDark: 'Switch to Dark Mode',
     dashboard: 'Dashboard',
     login: 'Login',
+    backToHome: 'Back to home',
     getStarted: 'Get Started',
     goToDashboard: 'Go to Dashboard',
     // User-focused value proposition
-    heroSubtitle: 'One Key, All AI Models',
-    heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+    heroSubtitle: 'GPT API Platform',
+    heroDescription: 'Access GPT with one API key and manage usage and quotas in one place',
     tags: {
       subscriptionToApi: 'Subscription to API',
       stickySession: 'Session Persistence',
@@ -51,7 +52,7 @@ export default {
     },
     features: {
       unifiedGateway: 'One-Click Access',
-      unifiedGatewayDesc: 'Get a single API key to call all connected AI models. No separate applications needed.',
+      unifiedGatewayDesc: 'Access GPT models with one API key and manage requests and usage in one place.',
       multiAccount: 'Always Reliable',
       multiAccountDesc: 'Smart routing across multiple upstream accounts with automatic failover. Say goodbye to errors.',
       balanceQuota: 'Pay What You Use',
@@ -95,7 +96,7 @@ export default {
     },
     providers: {
       title: 'Supported AI Models',
-      description: 'One API, Multiple Choices',
+      description: 'Currently supports GPT only',
       supported: 'Supported',
       soon: 'Soon',
       claude: 'Claude',
@@ -192,8 +193,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API Setup',
-    description: 'Configure your Sub2API instance',
+    title: '智驿 AI Setup',
+    description: 'Configure your 智驿 AI instance',
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',

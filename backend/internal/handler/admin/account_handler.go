@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -48,6 +49,7 @@ func NewOAuthHandler(oauthService *service.OAuthService) *OAuthHandler {
 
 // AccountHandler handles admin account management
 type AccountHandler struct {
+	claudeResetCredits      claudeResetReader
 	adminService            service.AdminService
 	oauthService            *service.OAuthService
 	openaiOAuthService      *service.OpenAIOAuthService
@@ -1323,6 +1325,15 @@ func (h *AccountHandler) RecoverState(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := rejectManualRevokedOAuthRecovery(account); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	if h.rateLimitService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Rate limit service unavailable")
@@ -1336,7 +1347,7 @@ func (h *AccountHandler) RecoverState(c *gin.Context) {
 		return
 	}
 
-	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	account, err = h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -1728,6 +1739,22 @@ func (h *AccountHandler) GetStats(c *gin.Context) {
 	response.Success(c, stats)
 }
 
+func rejectManualRevokedOAuthRecovery(account *service.Account) error {
+	if account == nil || account.Platform != service.PlatformOpenAI ||
+		account.Type != service.AccountTypeOAuth || account.Status != service.StatusError {
+		return nil
+	}
+	message := strings.ToLower(account.ErrorMessage)
+	for _, signal := range []string{"token_revoked", "token_invalidated", "token revoked (401)",
+		"invalidated oauth token", "account_deactivated"} {
+		if strings.Contains(message, signal) {
+			return infraerrors.Conflict("OAUTH_REAUTH_REQUIRED",
+				"OAuth token was revoked; re-authorize and test this account before restoring its status")
+		}
+	}
+	return nil
+}
+
 // ClearError handles clearing account error
 // POST /api/v1/admin/accounts/:id/clear-error
 func (h *AccountHandler) ClearError(c *gin.Context) {
@@ -1737,6 +1764,15 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 		return
 	}
 
+	current, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := rejectManualRevokedOAuthRecovery(current); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	account, err := h.adminService.ClearAccountError(c.Request.Context(), accountID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -1933,7 +1969,14 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 	for _, id := range req.AccountIDs {
 		accountID := id // 闭包捕获
 		g.Go(func() error {
-			account, err := h.adminService.ClearAccountError(gctx, accountID)
+			current, err := h.adminService.GetAccount(gctx, accountID)
+			if err == nil {
+				err = rejectManualRevokedOAuthRecovery(current)
+			}
+			var account *service.Account
+			if err == nil {
+				account, err = h.adminService.ClearAccountError(gctx, accountID)
+			}
 			if err != nil {
 				mu.Lock()
 				failedCount++
@@ -2946,6 +2989,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			})
 		}
 		response.Success(c, models)
+		return
+	}
+
+	// TypeSafe accounts serve only the native System One model.
+	if account.IsTypeSafe() {
+		response.Success(c, []claude.Model{{ID: typesafe.JevLatestModel, Type: "model", DisplayName: typesafe.JevLatestModel}})
 		return
 	}
 

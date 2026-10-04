@@ -634,6 +634,7 @@
     <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
       v{{ version }}
     </span>
+    <TotpStepUpDialog :controller="systemStepUp" />
   </div>
 </template>
 
@@ -650,6 +651,8 @@ import {
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpCancelled } from '@/composables/useStepUp'
 
 const GITHUB_REPO = 'Wei-Shaw/sub2api'
 // Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
@@ -663,6 +666,7 @@ const props = defineProps<{
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const systemStepUp = useStepUp()
 
 const isAdmin = computed(() => authStore.isAdmin)
 
@@ -729,7 +733,7 @@ const activeManualCommand = computed(() =>
 )
 
 // Only show update check for release builds (binary/docker deployment)
-const isReleaseBuild = computed(() => buildType.value === 'release')
+const isReleaseBuild = computed(() => buildType.value === 'release' && !currentVersion.value.includes('-custom'))
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -759,7 +763,7 @@ async function handleUpdate() {
   updateSuccess.value = false
 
   try {
-    const result = await performUpdate()
+    const result = await systemStepUp.run(() => performUpdate())
     successKind.value = 'update'
     updateSuccess.value = true
     needRestart.value = result.need_restart
@@ -833,7 +837,7 @@ async function handleRollback() {
   rollbackError.value = ''
 
   try {
-    const result = await rollbackAPI(selectedRollbackVersion.value)
+    const result = await systemStepUp.run(() => rollbackAPI(selectedRollbackVersion.value))
     successKind.value = 'rollback'
     updateSuccess.value = true
     needRestart.value = result.need_restart
@@ -855,9 +859,16 @@ async function handleRestart() {
   restartCountdown.value = 8
 
   try {
-    await restartService()
+    await systemStepUp.run(() => restartService())
     // Service will restart, page will reload automatically or show disconnected
   } catch (error) {
+    const apiError = error as { status?: number; message?: string }
+    if (isStepUpCancelled(error) || (apiError.status && apiError.status >= 400)) {
+      restarting.value = false
+      restartCountdown.value = 0
+      if (!isStepUpCancelled(error)) appStore.showError(apiError.message || t('common.error'))
+      return
+    }
     // Expected - connection will be lost during restart
     console.log('Service restarting...')
   }

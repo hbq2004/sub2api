@@ -102,7 +102,7 @@ func (s *RedeemCacheSuite) TestAcquireAndReleaseRedeemLock() {
 }
 
 func (s *RedeemCacheSuite) TestAcquireRedeemLock_TTL() {
-	lockKey := redeemLockKeyPrefix + "CODE2"
+	lockKey := redeemLockKey("CODE2")
 	lockTTL := 15 * time.Second
 
 	ok, err := s.cache.AcquireRedeemLock(s.ctx, "CODE2", lockTTL)
@@ -112,6 +112,9 @@ func (s *RedeemCacheSuite) TestAcquireRedeemLock_TTL() {
 	ttl, err := s.rdb.TTL(s.ctx, lockKey).Result()
 	require.NoError(s.T(), err, "TTL lock key")
 	s.AssertTTLWithin(ttl, 1*time.Second, lockTTL)
+	exists, err := s.rdb.Exists(s.ctx, redeemLockKeyPrefix+"CODE2").Result()
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), exists, "the lock key must not contain the plaintext redemption code")
 }
 
 func (s *RedeemCacheSuite) TestReleaseRedeemLock_Idempotent() {

@@ -14,6 +14,8 @@ import (
 
 // ExportData exports proxy-only data for migration.
 func (h *ProxyHandler) ExportData(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
 	ctx := c.Request.Context()
 
 	selectedIDs, err := parseProxyIDs(c)

@@ -1,0 +1,50 @@
+services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - shop-backend
+
+  shop:
+    build: .
+    image: ai-daichong/dujiao-next:production
+    restart: unless-stopped
+    depends_on:
+      - redis
+    volumes:
+      - ./private/config.yml:/app/config.yml:ro
+      - ./data:/app/db
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - shop-backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - shop
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./portal:/srv/portal:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    networks:
+      shop-backend:
+      zynexus-edge:
+        ipv4_address: 172.19.0.3
+
+networks:
+  shop-backend:
+  zynexus-edge:
+    external: true
+
+volumes:
+  redis-data:

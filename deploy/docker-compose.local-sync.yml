@@ -1,0 +1,14 @@
+services:
+  sub2api:
+    image: sub2api:local-sync
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: http://host.docker.internal:7890
+        HTTPS_PROXY: http://host.docker.internal:7890
+        NO_PROXY: localhost,127.0.0.1
+        http_proxy: http://host.docker.internal:7890
+        https_proxy: http://host.docker.internal:7890
+        no_proxy: localhost,127.0.0.1
+        NODE_USE_ENV_PROXY: "1"

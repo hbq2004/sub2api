@@ -292,6 +292,7 @@ export default {
       generateCodesTitle: 'Generate Redeem Codes',
       generatedSuccessfully: 'Generated Successfully',
       codesCreated: '{count} redeem code(s) created',
+      oneTimeCodeNotice: 'Codes are shown only once here. Deliver them securely before closing; lists and history show masked codes.',
       codeType: 'Code Type',
       amount: 'Amount ($)',
       value: 'Value',

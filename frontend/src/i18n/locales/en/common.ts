@@ -168,7 +168,7 @@ export default {
     apiKeys: 'API Keys',
     batchImage: 'Batch Images',
     usage: 'Usage',
-    redeem: 'Redeem',
+    redeem: 'Top Up / Redeem',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',
     affiliateInviteRecords: 'Invite Records',
@@ -239,12 +239,15 @@ export default {
     emailPlaceholder: 'Enter your email',
     passwordLabel: 'Password',
     passwordPlaceholder: 'Enter your password',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
     createPasswordPlaceholder: 'Create a strong password',
     passwordHint: 'At least 6 characters',
     emailRequired: 'Email is required',
     invalidEmail: 'Please enter a valid email address',
     passwordRequired: 'Password is required',
     passwordMinLength: 'Password must be at least 6 characters',
+    passwordTooLong: 'Password is too long. Please use a shorter password.',
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
       USER_NOT_ACTIVE: 'Account has been disabled.',
@@ -347,7 +350,8 @@ export default {
       }
     },
     emailOAuth: {
-      signIn: 'Continue with {providerName}'
+      signIn: 'Continue with {providerName}',
+      callbackFailed: 'Sign-in incomplete'
     },
     oidc: {
       signIn: 'Continue with {providerName}',

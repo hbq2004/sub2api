@@ -35,8 +35,10 @@ func (RedeemCode) Annotations() []schema.Annotation {
 
 func (RedeemCode) Fields() []ent.Field {
 	return []ent.Field{
+		// The database stores AES-GCM ciphertext after migration. The service
+		// layer exposes the plaintext only for the one-time generation response.
 		field.String("code").
-			MaxLen(32).
+			MaxLen(2048).
 			NotEmpty().
 			Unique(),
 		field.String("type").

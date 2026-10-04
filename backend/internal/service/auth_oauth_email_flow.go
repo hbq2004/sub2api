@@ -116,6 +116,9 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 		return nil, nil, ErrRegDisabled
 	}
+	if err := validatePasswordLength(password); err != nil {
+		return nil, nil, err
+	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
 	if isReservedEmail(email) {
@@ -361,29 +364,6 @@ func (s *AuthService) oauthEmailFlowClient(ctx context.Context) *dbent.Client {
 }
 
 func (s *AuthService) loadOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
-	if client := s.oauthEmailFlowClient(ctx); client != nil {
-		entity, err := client.RedeemCode.Query().Where(redeemcode.CodeEQ(invitationCode)).Only(ctx)
-		if err != nil {
-			if dbent.IsNotFound(err) {
-				return nil, ErrRedeemCodeNotFound
-			}
-			return nil, err
-		}
-		return &RedeemCode{
-			ID:           entity.ID,
-			Code:         entity.Code,
-			Type:         entity.Type,
-			Value:        entity.Value,
-			Status:       entity.Status,
-			UsedBy:       entity.UsedBy,
-			UsedAt:       entity.UsedAt,
-			Notes:        oauthEmailFlowStringValue(entity.Notes),
-			CreatedAt:    entity.CreatedAt,
-			ExpiresAt:    entity.ExpiresAt,
-			GroupID:      entity.GroupID,
-			ValidityDays: entity.ValidityDays,
-		}, nil
-	}
 	return s.redeemRepo.GetByCode(ctx, invitationCode)
 }
 
@@ -414,37 +394,6 @@ func (s *AuthService) updateOAuthRegistrationInvitation(ctx context.Context, cod
 	if code == nil {
 		return nil
 	}
-	if client := s.oauthEmailFlowClient(ctx); client != nil {
-		update := client.RedeemCode.UpdateOneID(code.ID).
-			SetCode(code.Code).
-			SetType(code.Type).
-			SetValue(code.Value).
-			SetStatus(code.Status).
-			SetNotes(code.Notes).
-			SetValidityDays(code.ValidityDays)
-		if code.ExpiresAt != nil {
-			update = update.SetExpiresAt(*code.ExpiresAt)
-		} else {
-			update = update.ClearExpiresAt()
-		}
-		if code.UsedBy != nil {
-			update = update.SetUsedBy(*code.UsedBy)
-		} else {
-			update = update.ClearUsedBy()
-		}
-		if code.UsedAt != nil {
-			update = update.SetUsedAt(*code.UsedAt)
-		} else {
-			update = update.ClearUsedAt()
-		}
-		if code.GroupID != nil {
-			update = update.SetGroupID(*code.GroupID)
-		} else {
-			update = update.ClearGroupID()
-		}
-		_, err := update.Save(ctx)
-		return err
-	}
 	return s.redeemRepo.Update(ctx, code)
 }
 
@@ -454,13 +403,6 @@ func (s *AuthService) updateOAuthSignupSource(ctx context.Context, userID int64,
 		return
 	}
 	_ = client.User.UpdateOneID(userID).SetSignupSource(signupSource).Exec(ctx)
-}
-
-func oauthEmailFlowStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 // ValidatePasswordCredentials checks the local password without completing the

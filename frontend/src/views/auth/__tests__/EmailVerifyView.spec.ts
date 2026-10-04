@@ -269,6 +269,31 @@ describe('EmailVerifyView', () => {
     expect(wrapper.find('[data-testid="resend-captcha"]').exists()).toBe(true)
   })
 
+  it('shows SMTP failure and allows a retry without a configured Turnstile key', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({ turnstile_enabled: true, turnstile_site_key: '' })
+    sendVerifyCodeMock.mockRejectedValueOnce({ message: 'Email delivery failed' })
+    sessionStorage.setItem('register_data', JSON.stringify({ email: 'fresh@example.com', password: 'secret-123' }))
+    const wrapper = mount(EmailVerifyView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true,
+          TurnstileWidget: true,
+          transition: false
+        }
+      }
+    })
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Email delivery failed')
+    const resend = wrapper.findAll('button').find(button => button.text().includes('auth.resendCode'))!
+    expect(resend.attributes('disabled')).toBeUndefined()
+    await resend.trigger('click')
+    await flushPromises()
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('skips the registration email suffix whitelist for pending oauth verification', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-2',

@@ -37,6 +37,9 @@ func (s *AuthService) BindEmailIdentity(
 	if strings.TrimSpace(password) == "" {
 		return nil, ErrPasswordRequired
 	}
+	if err := validatePasswordLength(password); err != nil {
+		return nil, err
+	}
 	if err := s.VerifyOAuthEmailCode(ctx, normalizedEmail, verifyCode); err != nil {
 		return nil, err
 	}

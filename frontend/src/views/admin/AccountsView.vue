@@ -17,6 +17,16 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button
+                v-if="localCloudSyncAvailable"
+                class="btn btn-secondary"
+                :disabled="selIds.length === 0"
+                :title="selIds.length ? t('admin.accounts.localCloudSync.title') : t('admin.accounts.localCloudSync.selectFirst')"
+                @click="showLocalCloudSync = true"
+              >
+                <Icon name="cloud" size="sm" class="mr-1.5" />
+                {{ t('admin.accounts.localCloudSync.button') }}
+              </button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -378,8 +388,12 @@
               @probe="handleProbeUpstreamBilling(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row }">
+            <AccountPriorityCell
+              :account="row"
+              @updated="handleAccountUpdated"
+              @error="(message: string) => appStore.showError(message)"
+            />
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -458,6 +472,7 @@
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
+    <LocalCloudSyncModal :show="showLocalCloudSync" :account-ids="selIds" @close="showLocalCloudSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
       :show="showBulkEdit"
@@ -505,6 +520,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
+import LocalCloudSyncModal from '@/components/admin/account/LocalCloudSyncModal.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
@@ -520,6 +536,7 @@ import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vu
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import AccountPriorityCell from '@/components/account/AccountPriorityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
@@ -590,6 +607,9 @@ const selTypes = computed<AccountType[]>(() => {
 const showCreate = ref(false)
 const showEdit = ref(false)
 const showSync = ref(false)
+const showLocalCloudSync = ref(false)
+const localCloudSyncAvailable = window.location.port === '8080' &&
+  ['127.0.0.1', 'localhost'].includes(window.location.hostname)
 const showImportData = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
@@ -1874,11 +1894,14 @@ const handleBulkDelete = async () => {
   }
 }
 const handleBulkResetStatus = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!confirm(t('admin.accounts.bulkActions.resetStatusConfirm', { count: selIds.value.length }))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
     if (result.failed > 0) {
       appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+      const reauthCount = result.errors?.filter(item =>
+        item.error.includes('OAUTH_REAUTH_REQUIRED') || item.error.includes('OAuth token was revoked')).length ?? 0
+      if (reauthCount) appStore.showWarning(t('admin.accounts.bulkActions.reauthRequired', { count: reauthCount }))
     } else {
       appStore.showSuccess(t('admin.accounts.bulkActions.resetStatusSuccess', { count: result.success }))
       clearSelection()

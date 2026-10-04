@@ -101,4 +101,22 @@ describe('忘记密码腾讯验证码门禁', () => {
     })
     expect(captchaResetMock).toHaveBeenCalledOnce()
   })
+
+  it('allows a missing Turnstile key to reach the backend and display the error', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      turnstile_enabled: true,
+      turnstile_site_key: ''
+    })
+    forgotPasswordMock.mockRejectedValueOnce({ message: 'Captcha is not configured' })
+    const wrapper = mountForgotPassword()
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(forgotPasswordMock).toHaveBeenCalledOnce()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Captcha is not configured')
+  })
 })

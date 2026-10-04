@@ -1,51 +1,36 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background -->
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
-    ></div>
+  <div
+    class="auth-layout relative flex min-h-screen items-start justify-center overflow-y-auto px-4 py-8 sm:items-center sm:py-10"
+  >
+    <div class="auth-layout__backdrop pointer-events-none absolute inset-0"></div>
 
-    <!-- Decorative Elements -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <!-- Gradient Orbs -->
-      <div
-        class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"
-      ></div>
-      <div
-        class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"
-      ></div>
+    <main class="relative z-10 min-w-0 w-full max-w-md">
+      <router-link
+        v-if="!appStore.backendModeEnabled"
+        to="/home"
+        class="mx-auto mb-5 flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-gray-500 transition-colors hover:bg-white/70 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 dark:text-dark-400 dark:hover:bg-dark-800/70 dark:hover:text-white"
+      >
+        <Icon name="arrowLeft" size="sm" aria-hidden="true" />
+        {{ t('home.backToHome') }}
+      </router-link>
 
-      <!-- Grid Pattern -->
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(20,184,166,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(20,184,166,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
-    </div>
-
-    <!-- Content Container -->
-    <div class="relative z-10 w-full max-w-md">
       <!-- Logo/Brand -->
-      <div class="mb-8 text-center">
-        <!-- Custom Logo or Default Logo -->
-        <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-lg shadow-primary-500/30"
-          >
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <h1 class="text-gradient mb-2 text-3xl font-bold">
-            {{ siteName }}
-          </h1>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
-            {{ siteSubtitle }}
-          </p>
-        </template>
+      <div class="mb-7 text-center">
+        <div
+          class="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200/80 dark:bg-dark-800 dark:ring-dark-700"
+        >
+          <img :src="siteLogo || '/logo-zhiyi-z-20261002.svg'" alt="Logo" class="h-full w-full object-contain" />
+        </div>
+        <h1 class="text-gradient mb-2 text-3xl font-bold [overflow-wrap:anywhere]">
+          {{ siteName }}
+        </h1>
+        <p class="text-sm text-gray-500 [overflow-wrap:anywhere] dark:text-dark-400">
+          {{ siteSubtitle }}
+        </p>
       </div>
 
       <!-- Card Container -->
-      <div class="card-glass rounded-2xl p-8 shadow-glass">
+      <div class="card-glass rounded-2xl p-6 shadow-glass sm:p-8">
         <slot />
       </div>
 
@@ -55,25 +40,26 @@
       </div>
 
       <!-- Copyright -->
-      <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
-        &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
+      <div class="mt-8 text-center text-xs text-gray-400 [overflow-wrap:anywhere] dark:text-dark-500">
+        &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import Icon from '@/components/icons/Icon.vue'
 
 const appStore = useAppStore()
+const { t } = useI18n()
 
-const siteName = computed(() => appStore.siteName || 'Sub2API')
+const siteName = computed(() => appStore.siteName || '智驿 AI')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
-const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
-
+const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || t('home.heroSubtitle'))
 const currentYear = computed(() => new Date().getFullYear())
 
 onMounted(() => {
@@ -82,6 +68,29 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.auth-layout {
+  background: #f8fafc;
+}
+
+.dark .auth-layout {
+  background: #020617;
+}
+
+.auth-layout__backdrop {
+  background-image:
+    linear-gradient(rgba(20, 184, 166, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 184, 166, 0.045) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(20, 184, 166, 0.09), transparent 22%);
+  background-size: 56px 56px, 56px 56px, 100% 100%;
+}
+
+.dark .auth-layout__backdrop {
+  background-image:
+    linear-gradient(rgba(45, 212, 191, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 212, 191, 0.07) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(20, 184, 166, 0.1), transparent 22%);
+}
+
 .text-gradient {
   @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
 }

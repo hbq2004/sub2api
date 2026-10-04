@@ -232,9 +232,14 @@ func redirectToFrontendCallback(c *gin.Context, frontendCallback string) {
 }
 
 func (h *AuthHandler) createOAuthPendingSession(c *gin.Context, payload oauthPendingSessionPayload) error {
+	_, err := h.createOAuthPendingSessionWithResult(c, payload)
+	return err
+}
+
+func (h *AuthHandler) createOAuthPendingSessionWithResult(c *gin.Context, payload oauthPendingSessionPayload) (*dbent.PendingAuthSession, error) {
 	svc, err := h.pendingIdentityService()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	localFlowState := map[string]any{
@@ -263,11 +268,11 @@ func (h *AuthHandler) createOAuthPendingSession(c *gin.Context, payload oauthPen
 			"resolved_email_len", len(strings.TrimSpace(payload.ResolvedEmail)),
 			"has_target_user", payload.TargetUserID != nil,
 			"error", err.Error())
-		return infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
+		return nil, infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
 	}
 
 	setOAuthPendingSessionCookie(c, session.SessionToken, isRequestHTTPS(c))
-	return nil
+	return session, nil
 }
 
 func readCompletionResponse(session map[string]any) (map[string]any, bool) {

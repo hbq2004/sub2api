@@ -1,0 +1,4 @@
+private-backups/
+private-tools/
+private-backups/encrypted-backup-manifest.json
+private-backups/encrypted-backup-manifest.json.incomplete

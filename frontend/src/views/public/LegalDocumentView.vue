@@ -4,8 +4,8 @@
       <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <RouterLink to="/home" class="flex min-w-0 items-center gap-3">
           <template v-if="settings">
-            <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
-              <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+            <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
+              <img :src="siteLogo || '/logo-zhiyi-z-20261002.svg'" alt="Logo" class="h-full w-full object-contain" />
             </span>
             <span class="truncate text-base font-semibold text-gray-950 dark:text-white">
               {{ siteName }}
@@ -64,7 +64,7 @@
             <div class="min-w-0">
               <p class="text-sm font-medium text-primary-700 dark:text-primary-300">{{ documentTypeLabel }}</p>
               <h1 class="mt-2 break-words text-2xl font-bold tracking-normal text-gray-950 dark:text-white sm:text-3xl">
-                {{ currentDocument.title }}
+                {{ replaceSiteBranding(currentDocument.title, siteName) }}
               </h1>
               <p v-if="updatedAt" class="mt-3 text-sm text-gray-500 dark:text-dark-400">
                 {{ t('legal.updatedAt', { date: updatedAt }) }}
@@ -98,6 +98,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { getLocale } from '@/i18n'
 import { sanitizeUrl } from '@/utils/url'
+import { replaceSiteBranding } from '@/utils/branding'
 import { useAppStore } from '@/stores/app'
 import type { LoginAgreementDocument } from '@/types'
 import zhAdminCompliance from '../../../../docs/legal/admin-compliance.zh.md?raw'
@@ -120,7 +121,7 @@ marked.setOptions({
 const documentId = computed(() => String(route.params.documentId || ''))
 const isAdminComplianceDocument = computed(() => documentId.value === 'admin-compliance')
 const documents = computed(() => settings.value?.login_agreement_documents ?? [])
-const siteName = computed(() => settings.value?.site_name || 'Sub2API')
+const siteName = computed(() => settings.value?.site_name || '智驿 AI')
 const siteLogo = computed(() => sanitizeUrl(settings.value?.site_logo || '', {
   allowRelative: true,
   allowDataUrl: true,
@@ -154,7 +155,7 @@ const renderedHtml = computed(() => {
   if (!content) {
     return ''
   }
-  const html = marked.parse(content) as string
+  const html = marked.parse(replaceSiteBranding(content, siteName.value)) as string
   return DOMPurify.sanitize(html)
 })
 

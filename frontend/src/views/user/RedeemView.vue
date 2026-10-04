@@ -1,6 +1,47 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-2xl space-y-6">
+      <section class="space-y-4" aria-labelledby="card-topup-title">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 id="card-topup-title" class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('redeem.buyCardTitle') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('redeem.buyCardHint') }}
+            </p>
+          </div>
+          <a
+            :href="cardTopupShopUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-primary inline-flex items-center gap-2"
+          >
+            <Icon name="externalLink" size="sm" />
+            {{ t('redeem.openShop') }}
+          </a>
+        </div>
+        <a
+          :href="cardTopupShopUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="block break-all text-sm text-primary-600 hover:underline dark:text-primary-400"
+        >{{ cardTopupShopUrl }}</a>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <a
+            v-for="product in cardTopupProducts"
+            :key="product.amount"
+            :href="product.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex min-h-16 flex-col justify-center rounded-md border border-gray-200 bg-white px-3 py-2 text-center transition-colors hover:border-primary-400 hover:bg-primary-50 dark:border-dark-600 dark:bg-dark-800 dark:hover:border-primary-500 dark:hover:bg-dark-700"
+          >
+            <span class="text-sm font-semibold text-gray-900 dark:text-white">¥{{ product.amount }}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('redeem.cardCredits', { amount: product.amount }) }}</span>
+          </a>
+        </div>
+      </section>
+
       <!-- Current Balance Card -->
       <div class="card overflow-hidden">
         <div class="bg-gradient-to-br from-primary-500 to-primary-600 px-6 py-8 text-center">
@@ -375,6 +416,7 @@ import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
+import { cardTopupProducts, cardTopupShopUrl } from '@/constants/cardTopup'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
