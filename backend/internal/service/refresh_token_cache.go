@@ -40,8 +40,12 @@ type RefreshTokenCache interface {
 	// 返回 (nil, err) 如果发生其他错误
 	GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshTokenData, error)
 
+	// ConsumeRefreshToken atomically claims an existing token for rotation.
+	// Exactly one caller succeeds; cache errors must prevent token issuance.
+	ConsumeRefreshToken(ctx context.Context, tokenHash string) (bool, error)
+
 	// DeleteRefreshToken 删除单个Refresh Token
-	// 用于Token轮转时使旧Token失效
+	// 用于撤销与失败签发的清理
 	DeleteRefreshToken(ctx context.Context, tokenHash string) error
 
 	// DeleteUserRefreshTokens 删除用户的所有Refresh Token

@@ -72,6 +72,11 @@ func (c *refreshTokenCache) DeleteRefreshToken(ctx context.Context, tokenHash st
 	return c.rdb.Del(ctx, key).Err()
 }
 
+func (c *refreshTokenCache) ConsumeRefreshToken(ctx context.Context, tokenHash string) (bool, error) {
+	removed, err := c.rdb.Del(ctx, refreshTokenKey(tokenHash)).Result()
+	return removed == 1, err
+}
+
 func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID int64) error {
 	// Get all token hashes for this user
 	tokenHashes, err := c.GetUserTokenHashes(ctx, userID)

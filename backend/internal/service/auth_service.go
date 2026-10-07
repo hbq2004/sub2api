@@ -1827,10 +1827,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		}
 	}
 
-	// Token轮转：立即使旧Token失效
-	if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
-		// 继续处理，不影响主流程
+	// Claim rotation atomically after validation, so concurrent requests cannot
+	// branch a single refresh token into multiple valid successors.
+	consumed, err := s.refreshTokenCache.ConsumeRefreshToken(ctx, tokenHash)
+	if err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to consume refresh token: %v", err)
+		return nil, ErrServiceUnavailable
+	}
+	if !consumed {
+		return nil, ErrRefreshTokenInvalid
 	}
 
 	// 生成新的Token对，保持同一个家族ID

@@ -171,3 +171,7 @@ issues/
 # Upstream credential encryption roots must stay outside Git.
 /private-credentials/
 **/*credential-keyring*.json
+
+# Python helper bytecode
+__pycache__/
+*.py[cod]
