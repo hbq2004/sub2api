@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertReleaseProvenance } from './release-provenance.mjs'
+import { transferImage } from './image-transfer.mjs'
 
 const sourceDeploy = dirname(fileURLToPath(import.meta.url))
 const deploy = process.env.SUB2API_RUNTIME_ROOT ? join(resolve(process.env.SUB2API_RUNTIME_ROOT), 'deploy') : sourceDeploy
@@ -22,7 +23,7 @@ const localHealth = await fetch('http://127.0.0.1:8080/health', { signal: AbortS
 assert.ok(localHealth.ok && (await localHealth.json()).status === 'ok', 'Local application health check failed')
 const ssh = 'C:/Windows/System32/OpenSSH/ssh.exe'
 const connection = ['-i', 'D:/Downloads/Chrome/zynexus_shop_tokyo.pem', '-o', 'BatchMode=yes',
-  '-o', 'ConnectTimeout=15', '-o', 'StrictHostKeyChecking=yes', 'ubuntu@43.165.175.45']
+  '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=yes', 'ubuntu@43.165.175.45']
 function remote(source) {
   try { return execFileSync(ssh, [...connection, 'sudo -n python3 -'], { input: source,
     encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }).trim() }
@@ -45,11 +46,7 @@ if (process.argv.includes('--check-only') || current.imageID === receipt.imageID
 // Stream only the tested image, never the personal database or local keyring.
 const source = spawn(docker, ['save', receipt.imageID], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
 const sink = spawn(ssh, [...connection, 'sudo -n docker load'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
-source.stdout.pipe(sink.stdin)
-sink.stdin.on('error', () => {})
-source.stderr.resume(); sink.stderr.resume(); sink.stdout.resume()
-const codes = await Promise.all([new Promise(resolve => source.on('close', resolve)), new Promise(resolve => sink.on('close', resolve))])
-assert.ok(codes.every(code => code === 0), 'Tested image transfer failed')
+await transferImage(source, sink)
 const request = { image: receipt.imageID, version: receipt.version, revision: tested.sourceRevision, expected_previous: current.imageID }
 const script = 'REQUEST_JSON = ' + JSON.stringify(JSON.stringify(request)) + String.fromCharCode(10) + readFileSync(join(sourceDeploy, 'cloud_release_transaction.py'), 'utf8')
 const result = JSON.parse(remote(script))

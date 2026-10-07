@@ -245,6 +245,7 @@ async function verifyFixtureAPI(origin) {
   return token
 }
 async function verifyRollbackCompatibility(previousImage, environmentFile, dataDirectory) {
+  assert.match(previousImage, /^sha256:[a-f0-9]{64}$/, 'Rollback acceptance requires an immutable image ID')
   const name = fixtureNetwork + '-rollback'
   const before = integrity(fixturePG, 'postgres')
   d(['run', '-d', '--rm', '--name', name, '--network', fixtureNetwork,
@@ -349,7 +350,7 @@ try {
   const browserReport = JSON.parse(browserOutput)
   assert.ok(browserReport.passed)
   record('Desktop/mobile public and administrator browser regression')
-  await verifyRollbackCompatibility(current.Image, fixtureEnvPath, fixtureData)
+  await verifyRollbackCompatibility(process.env.SUB2API_ROLLBACK_IMAGE || current.Image, fixtureEnvPath, fixtureData)
   if (args.includes('--test-only')) {
     report.passed = true
     report.testOnly = true
