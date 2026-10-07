@@ -6,8 +6,9 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { keyBindingHash } from './key-integrity.mjs'
 
-const deploy = dirname(fileURLToPath(import.meta.url))
-const root = dirname(deploy)
+const sourceDeploy = dirname(fileURLToPath(import.meta.url))
+const root = process.env.SUB2API_RUNTIME_ROOT ? resolve(process.env.SUB2API_RUNTIME_ROOT) : dirname(sourceDeploy)
+const deploy = join(root, 'deploy')
 const args = process.argv.slice(2)
 const option = name => args[args.indexOf(name) + 1]
 const image = args.includes('--image') ? option('--image') : ''
@@ -97,7 +98,8 @@ function protection(container, user = 'sub2api') {
 }
 function encryptRecovery(path) {
   execute(process.env.SUB2API_PWSH || 'pwsh.exe', ['-NoProfile', '-NonInteractive', '-File',
-    join(deploy, 'Protect-ReleaseFile.ps1'), '-Source', path])
+    join(sourceDeploy, 'Protect-ReleaseFile.ps1'), '-Source', path,
+    '-RecipientDirectory', join(deploy, 'tokyo-shared/private-backups')])
 }
 function backup(label) {
   const directory = join(work, label)
@@ -230,8 +232,43 @@ async function verifyFixtureAPI(origin) {
   const rows = Array.isArray(history.body.data) ? history.body.data : history.body.data.items
   assert.ok(rows.every(row => row.code !== code))
   record('Synthetic code redemption, replay rejection and masked history')
+  const rotations = await Promise.all(Array.from({ length: 4 }, () =>
+    api(origin, 'POST', '/auth/refresh', { refresh_token: login.body.data.refresh_token })))
+  assert.equal(rotations.filter(result => result.status === 200).length, 1, 'Concurrent HTTP refresh must have one winner')
+  assert.ok(rotations.every(result => result.status === 200 || result.status === 401), 'Unexpected refresh failure status')
+  const successor = rotations.find(result => result.status === 200).body.data
+  assert.equal((await api(origin, 'GET', '/auth/me', undefined, successor.access_token)).status, 200)
+  assert.equal((await api(origin, 'POST', '/auth/logout', { refresh_token: successor.refresh_token }, successor.access_token)).status, 200)
+  assert.equal((await api(origin, 'GET', '/auth/me', undefined, successor.access_token)).status, 401)
+  assert.equal((await api(origin, 'POST', '/auth/refresh', { refresh_token: successor.refresh_token })).status, 401)
+  record('Concurrent HTTP refresh issues one successor; logout revokes access and refresh tokens')
   return token
 }
+async function verifyRollbackCompatibility(previousImage, environmentFile, dataDirectory) {
+  const name = fixtureNetwork + '-rollback'
+  const before = integrity(fixturePG, 'postgres')
+  d(['run', '-d', '--rm', '--name', name, '--network', fixtureNetwork,
+    '--env-file', environmentFile, '-v', dataDirectory + ':/app/data',
+    '-v', keyVolume + ':/run/sub2api-secrets:ro', previousImage])
+  resources.push(name)
+  let healthy = false
+  for (let attempt = 0; attempt < 90; attempt++) {
+    try {
+      healthy = JSON.parse(d(['exec', name, 'wget', '-qO-', 'http://127.0.0.1:8080/health'])).status === 'ok'
+      if (healthy) break
+    } catch {}
+    await delay(1000)
+  }
+  assert.ok(healthy, 'Previous protected image is incompatible with the migrated fixture')
+  assert.deepEqual(integrity(fixturePG, 'postgres'), before, 'Previous image altered protected fixture data')
+  const state = protection(fixturePG, 'postgres')
+  assert.equal(state.accounts, state.encrypted_accounts)
+  assert.equal(state.redeem_codes, state.protected_codes)
+  report.rollbackCompatibleImageIDs = [previousImage]
+  d(['rm', '-f', name]); resources.splice(resources.indexOf(name), 1)
+  record('Previous protected image starts against migrated isolated data; rollback compatibility verified')
+}
+
 function cleanupWork() {
   const absolute = resolve(work)
   assert.ok(absolute.startsWith(resolve(privateDirectory) + '\\'), 'Cleanup escaped private staging')
@@ -306,12 +343,13 @@ try {
   const fixtureAdminToken = await verifyFixtureAPI(fixtureOrigin)
   const browserCredentialFile = join(work, 'browser-credential.json')
   writeFileSync(browserCredentialFile, JSON.stringify({ token: fixtureAdminToken }), { mode: 0o600 })
-  const browserOutput = execute(process.execPath, [join(deploy, 'verify-local-release.mjs'),
+  const browserOutput = execute(process.execPath, [join(sourceDeploy, 'verify-local-release.mjs'),
     '--origin', fixtureOrigin, '--version', expectedVersion, '--output', reportDirectory,
     '--credential-file', browserCredentialFile], { encoding: 'utf8' })
   const browserReport = JSON.parse(browserOutput)
   assert.ok(browserReport.passed)
   record('Desktop/mobile public and administrator browser regression')
+  await verifyRollbackCompatibility(current.Image, fixtureEnvPath, fixtureData)
   if (args.includes('--test-only')) {
     report.passed = true
     report.testOnly = true
@@ -354,7 +392,7 @@ try {
     } else {
       await verifyPersonalAPI('http://127.0.0.1:8080')
     }
-    const liveBrowser = JSON.parse(execute(process.execPath, [join(deploy, 'verify-local-release.mjs'),
+    const liveBrowser = JSON.parse(execute(process.execPath, [join(sourceDeploy, 'verify-local-release.mjs'),
       '--origin', 'http://127.0.0.1:8080', '--version', expectedVersion,
       '--output', join(reportDirectory, 'live')], { encoding: 'utf8' }))
     assert.ok(liveBrowser.passed)

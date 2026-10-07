@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -434,6 +436,19 @@ func attachInflightSnapshot(svc *GatewayService, snap *inflightSnapshotCacheStub
 
 // 已定价模型永不查账号映射；随机未定价模型名不直接查库、不产生按模型名的缓存（内存有界）。
 func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
+	// HeapAlloc measures the whole process; other tests' background work must
+	// not be charged to this estimator. Preserve the strict bound in a child.
+	if os.Getenv("SUB2API_TEST_MEMORY_ISOLATED") != "1" {
+		binary, err := os.Executable()
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, "-test.run=^TestInflightEstimate_AccountMappingNoDBAndBoundedMemory$", "-test.timeout=30s")
+		command.Env = append(os.Environ(), "SUB2API_TEST_MEMORY_ISOLATED=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "isolated memory regression: %s", output)
+		return
+	}
 	groupID := int64(40)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
@@ -459,6 +474,7 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(svc)
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
 	require.Equal(t, int64(n), snap.reads.Load(), "unpriced lookups read the scheduler snapshot only")
 	require.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(8<<20), "no per-model cache growth")

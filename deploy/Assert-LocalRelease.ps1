@@ -1,7 +1,9 @@
 param([string]$ImageID = '')
 
 $ErrorActionPreference = 'Stop'
-$receipt = Get-Content -LiteralPath (Join-Path $PSScriptRoot '.local-release.json') -Raw | ConvertFrom-Json
+$runtimeDeploy = $PSScriptRoot
+if ($env:SUB2API_RUNTIME_ROOT) { $runtimeDeploy = Join-Path ([IO.Path]::GetFullPath($env:SUB2API_RUNTIME_ROOT)) 'deploy' }
+$receipt = Get-Content -LiteralPath (Join-Path $runtimeDeploy '.local-release.json') -Raw | ConvertFrom-Json
 if (!$receipt.passed -or $receipt.imageID -notmatch '^sha256:[a-f0-9]{64}$') {
     throw 'No successfully tested local release exists. Run Update-Local.ps1.'
 }

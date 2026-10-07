@@ -70,6 +70,22 @@ try {
         } catch (error) { report.failures.push(error.message) }
       }
     }
+    const accountList = /\/api\/v1\/admin\/accounts(?:\?|$)/
+    await adminPage.route(accountList, route => route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 500, message: 'Synthetic list failure' }) }))
+    await adminPage.goto(origin + '/admin/accounts', { waitUntil: 'networkidle' })
+    const failure = adminPage.getByTestId('accounts-load-error')
+    await failure.waitFor({ state: 'visible' })
+    for (const width of [1440, 390]) {
+      await adminPage.setViewportSize({ width, height: 960 })
+      assert.equal(await adminPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Account error feedback overflows')
+      await adminPage.screenshot({ path: join(directory, 'accounts-error-' + width + '.png'), fullPage: true })
+    }
+    await adminPage.unroute(accountList)
+    const recovery = adminPage.waitForResponse(response => accountList.test(response.url()) && response.status() === 200)
+    await failure.locator('button').click()
+    await recovery
+    await failure.waitFor({ state: 'hidden' })
+    report.checks.push('Account list HTTP 500 displays retry feedback and recovers without browser errors')
     await adminContext.close()
   }
   assert.deepEqual(report.errors, [], 'Browser runtime errors')
