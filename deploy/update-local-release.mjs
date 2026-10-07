@@ -49,6 +49,8 @@ function execute(binary, arguments_, options = {}) {
 }
 const d = (arguments_, options) => execute(docker, arguments_, { encoding: 'utf8', ...options }).trim()
 const inspect = name => JSON.parse(d(['inspect', name]))[0]
+const normalizedBindPath = path => path.replaceAll('\', '/').toLowerCase()
+  .replace(/^\/run\/desktop\/mnt\/host\/([a-z])\//, '$1:/')
 const envMap = items => Object.fromEntries(items.map(item => {
   const index = item.indexOf('='); return [item.slice(0, index), item.slice(index + 1)]
 }))
