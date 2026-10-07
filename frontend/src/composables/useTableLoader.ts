@@ -26,6 +26,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
 
   const items = ref<T[]>([])
   const loading = ref(false)
+  const loadError = ref(false)
   const params = reactive<P>({ ...(initialParams || {}) } as P)
   const pagination = reactive<PaginationState>({
     page: 1,
@@ -49,6 +50,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
     const currentController = new AbortController()
     abortController = currentController
     loading.value = true
+    loadError.value = false
 
     try {
       const response = await fetchFn(
@@ -66,6 +68,10 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
     } catch (error) {
       if (currentController.signal.aborted || abortController !== currentController) return
       if (!isAbortError(error)) {
+        loadError.value = true
+        items.value = []
+        pagination.total = 0
+        pagination.pages = 0
         console.error('Table load error:', error)
         throw error
       }
@@ -81,20 +87,20 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
     return load()
   }
 
-  const debouncedReload = useDebounceFn(reload, debounceMs)
+  const debouncedReload = useDebounceFn(() => reload().catch(() => {}), debounceMs)
 
   const handlePageChange = (page: number) => {
     // 确保页码在有效范围内
     const validPage = Math.max(1, Math.min(page, pagination.pages || 1))
     pagination.page = validPage
-    load()
+    return load().catch(() => {})
   }
 
   const handlePageSizeChange = (size: number) => {
     pagination.page_size = size
     pagination.page = 1
     setPersistedPageSize(size)
-    load()
+    return load().catch(() => {})
   }
 
   onUnmounted(() => {
@@ -105,6 +111,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
   return {
     items,
     loading,
+    loadError,
     params,
     pagination,
     load,

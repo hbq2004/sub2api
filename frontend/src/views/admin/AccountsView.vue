@@ -2,6 +2,10 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <div v-if="loadError" role="alert" data-testid="accounts-load-error" class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          <span>{{ t('admin.accounts.failedToLoad') }}</span>
+          <button type="button" class="btn btn-secondary" :disabled="loading" @click="handleManualRefresh">{{ t('common.tryAgain') }}</button>
+        </div>
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
             v-model:searchQuery="params.search"
@@ -1089,6 +1093,7 @@ const syncAccountListDerivedParams = () => {
 const {
   items: accounts,
   loading,
+  loadError,
   params,
   pagination,
   load: baseLoad,
@@ -1343,7 +1348,7 @@ const handleSort = (key: string, order: AccountSortOrder) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
-  load()
+  void load().catch(() => {})
 }
 
 watch(loading, (isLoading, wasLoading) => {
@@ -1498,9 +1503,13 @@ const refreshAccountsIncrementally = async () => {
 }
 
 const handleManualRefresh = async () => {
-  await Promise.all([load(), loadUpstreamBillingProbeGlobalState()])
-  // Force usage cells to refetch /usage on explicit user refresh.
-  usageManualRefreshToken.value += 1
+  try {
+    await Promise.all([load(), loadUpstreamBillingProbeGlobalState()])
+    // Force usage cells to refetch /usage on explicit user refresh.
+    usageManualRefreshToken.value += 1
+  } catch {
+    // The list loader exposes a retryable error state in the page.
+  }
 }
 
 const loadUpstreamBillingProbeGlobalState = async () => {
@@ -2555,7 +2564,7 @@ onMounted(async () => {
     }
   }
 
-  load()
+  void load().catch(() => {})
   loadUpstreamBillingProbeGlobalState()
   const [proxiesResult, groupsResult] = await Promise.allSettled([
     adminAPI.proxies.getAll(),

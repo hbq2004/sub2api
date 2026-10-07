@@ -281,6 +281,35 @@ describe('useTableLoader', () => {
   // --- 错误处理 ---
 
   describe('错误处理', () => {
+    it.each(['page', 'size'] as const)('handles a failed %s request without showing old rows as the new result', async (operation) => {
+      const fetchFn = createMockFetchFn([{ id: 1 }], 40, 2)
+      const table = useTableLoader({ fetchFn })
+      await table.load()
+      fetchFn.mockRejectedValueOnce(new Error('Synthetic list failure'))
+      const pending = operation === 'page' ? table.handlePageChange(2) : table.handlePageSizeChange(50)
+      await pending
+      expect(table.items.value).toEqual([])
+      expect(table.pagination.total).toBe(0)
+      expect(table.loadError?.value).toBe(true)
+      expect(table.loading.value).toBe(false)
+      fetchFn.mockResolvedValueOnce({ items: [{ id: 2 }], total: 1, pages: 1 })
+      await table.load()
+      expect(table.items.value).toEqual([{ id: 2 }])
+      expect(table.loadError.value).toBe(false)
+    })
+
+    it('handles a failed debounced search without an unhandled rejection', async () => {
+      const fetchFn = createMockFetchFn([{ id: 1 }], 1, 1)
+      const table = useTableLoader({ fetchFn, debounceMs: 100 })
+      await table.load()
+      fetchFn.mockRejectedValueOnce(new Error('Synthetic search failure'))
+      table.debouncedReload()
+      await vi.runAllTimersAsync()
+      expect(table.items.value).toEqual([])
+      expect(table.loadError?.value).toBe(true)
+      expect(table.loading.value).toBe(false)
+    })
+
     it('非取消错误会被抛出', async () => {
       const fetchFn = vi.fn().mockRejectedValue(new Error('Server error'))
       const { load } = useTableLoader({ fetchFn })
