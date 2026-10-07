@@ -49,7 +49,7 @@ function execute(binary, arguments_, options = {}) {
 }
 const d = (arguments_, options) => execute(docker, arguments_, { encoding: 'utf8', ...options }).trim()
 const inspect = name => JSON.parse(d(['inspect', name]))[0]
-const normalizedBindPath = path => path.replaceAll('\', '/').toLowerCase()
+const normalizedBindPath = path => path.replaceAll('\\', '/').toLowerCase()
   .replace(/^\/run\/desktop\/mnt\/host\/([a-z])\//, '$1:/')
 const envMap = items => Object.fromEntries(items.map(item => {
   const index = item.indexOf('='); return [item.slice(0, index), item.slice(index + 1)]
@@ -246,8 +246,8 @@ try {
   assert.match(sourceRevision, /^[0-9a-f]{40}$/, 'Image must carry the full source revision label')
   const current = inspect('sub2api')
   const currentEnvironment = envMap(current.Config.Env)
-  assert.ok(current.Mounts.some(mount => mount.Destination === '/app/data' &&
-    mount.Source.replaceAll('\\', '/').toLowerCase() === join(deploy, 'data').replaceAll('\\', '/').toLowerCase()), 'Local data owner differs from this checkout')
+  assert.ok(current.Mounts.some(mount => mount.Type === 'bind' && mount.Destination === '/app/data' &&
+    normalizedBindPath(mount.Source) === normalizedBindPath(join(deploy, 'data'))), 'Local data owner differs from this checkout')
   report.imageID = imageID
   report.sourceRevision = sourceRevision
   report.previousImageID = current.Image
